@@ -23,9 +23,6 @@ import Control.Concurrent (threadDelay)
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
 
-hexWithSpaces :: BS.ByteString -> String
-hexWithSpaces = unwords . map (printf "%02x") . BS.unpack
-
 stdinLoop :: Handle -> KNXConnection -> IO ()
 stdinLoop handle knx = do
   line <- hGetLine handle
@@ -38,11 +35,13 @@ stdinLoop handle knx = do
       putStrLn $ "Parsed GroupAddress: " ++ show groupAddress
       putStrLn $ "Parsed Byte List: " ++ show byteList
       let telegram = Telegram
-            { typeField = 39
+            { messageCode = 39
+            , additionalInfo = Nothing
             , srcField = Nothing
             , dstField = groupAddress
-            , cmdType = 0x80
-            , cmdData = LBS.pack (map fromIntegral byteList)
+            , tpci = 0x00
+            , apci = 0x80
+            , payload = LBS.pack (map fromIntegral byteList)
             } 
       putStrLn $ show telegram
       sendTelegram knx telegram
@@ -85,21 +84,25 @@ timeSenderLoop knx = do
   time <- getCurrentTime
   let timeBytes = timeToBytes time
   let telegram = Telegram
-        { typeField = 39
+        { messageCode = 39
+        , additionalInfo = Nothing
         , srcField = Nothing
         , dstField = GroupAddress 0 0 1
-        , cmdType = 0x80
-        , cmdData = LBS.pack timeBytes
+        , tpci = 0x00
+        , apci = 0x80
+        , payload = LBS.pack timeBytes
         } 
   putStrLn $ show telegram
   sendTelegram knx telegram
   let dateBytes = dateToBytes time
   let dateTelegram = Telegram
-        { typeField = 39
+        { messageCode = 39
+        , additionalInfo = Nothing
         , srcField = Nothing
         , dstField = GroupAddress 0 0 2
-        , cmdType = 0x80
-        , cmdData = LBS.pack dateBytes
+        , tpci = 0x00
+        , apci = 0x80
+        , payload = LBS.pack dateBytes
         }
   putStrLn $ show dateTelegram
   sendTelegram knx dateTelegram
