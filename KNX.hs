@@ -32,6 +32,9 @@ data KNXConnection = KNXConnection
     , sock :: Socket
     } deriving (Show)
 
+hexWithSpaces :: LBS.ByteString -> String
+hexWithSpaces = unwords . map (printf "%02x") . LBS.unpack
+
 createTCPConnection :: HostName -> ServiceName -> IO Socket
 createTCPConnection host port = do
     addrInfos <- getAddrInfo (Just defaultHints {addrSocketType = Stream}) (Just host) (Just port)
@@ -53,6 +56,7 @@ knxLoop knx buffer = do
     if LBS.null lazyMsg
         then putStrLn "Connection closed by the server"
     else do
+        putStrLn $ "Received: " ++ hexWithSpaces newBuffer
         case parseTelegram newBuffer of
             Left err -> do
                 knxLoop knx newBuffer
@@ -87,61 +91,83 @@ disconnectKnx knxConnection = do
 
 sendTelegram :: KNXConnection -> Telegram -> IO ()
 sendTelegram knxConnection telegram = do
-  let msg = composeTelegram telegram
-  _ <- send (sock knxConnection) (LBS.toStrict msg)
-  return ()
+    let msg = composeTelegram telegram
+    putStrLn $ "Sending: " ++ hexWithSpaces msg
+    _ <- send (sock knxConnection) (LBS.toStrict msg)
+    return ()
 
 data Telegram = Telegram
-    { typeField :: Word16
+    { messageCode :: Word8
+    , additionalInfo :: Maybe LBS.ByteString
     , srcField :: Maybe KNXAddress
     , dstField :: GroupAddress
-    , cmdType :: Word16
-    , cmdData :: LBS.ByteString
+    , tpci :: Word8
+    , apci :: Word8
+    , payload :: LBS.ByteString
     }
 
 instance Show Telegram where
-  show (Telegram t src dst cmdType cmd) = concat
-    [ "Telegram { typeField = ", show t
-    , ", srcField = ", show src
-    , ", dstField = ", show dst
-    , ", cmdType = ", show cmdType
-    , ", cmdData = ", showCmdData cmd
-    , " }"
+  show (Telegram messageCode additionalInfo src dst tpci apci payload) = concat
+    [ "Telegram { "
+    , "messageCode = ", show messageCode, ", "
+    , "additionalInfo = ", show additionalInfo, ", "
+    , "src = ", show src, ", "
+    , "dst = ", show dst, ", "
+    , "tpci = ", show tpci, ", "
+    , "apci = ", show apci, ", "
+    , "payload = ", showByteString payload, " }"
     ]
     where
-      showCmdData :: LBS.ByteString -> String
-      showCmdData lbs = show (LBS.unpack lbs :: [Word8])
+      showByteString :: LBS.ByteString -> String
+      showByteString lbs = show (LBS.unpack lbs :: [Word8])
 
 parseTelegram :: LBS.ByteString -> Either String Telegram
 parseTelegram input =
-  case runGetOrFail getLength input of
-    Left (_, _, err) -> Left err
-    Right (remainingInput, _, lengthVal) ->
-      case runGetOrFail (getTelegramData (fromIntegral lengthVal)) remainingInput of
+    case runGetOrFail getLength input of
         Left (_, _, err) -> Left err
-        Right (_, _, telegram) -> Right telegram
-  where
-    getLength :: Get Word16
-    getLength = getWord16be
+        Right (remainingInput, _, lengthVal) ->
+            case runGetOrFail (getTelegramData (fromIntegral lengthVal)) remainingInput of
+            Left (_, _, err) -> Left err
+            Right (_, _, telegram) -> Right telegram
+    where
+        getLength :: Get Word16
+        getLength = getWord16be
 
-    getTelegramData :: Int64 -> Get Telegram
-    getTelegramData telegramLength = do
-      telegramType <- getWord16be
-      src <- fmap parseKNXAddress $ getWord16be
-      dst <- fmap parseGroupAddress $ getWord16be
-      cmd <- getWord16be
-      payload <- getLazyByteString (telegramLength - 8) -- Subtract 8 because we already read 4 * 2 bytes
-      return Telegram { typeField = telegramType, srcField = Just src, dstField = dst, cmdType = cmd, cmdData = payload }
+        getTelegramData :: Int64 -> Get Telegram
+        getTelegramData telegramLength = do
+            messageCode <- getWord8
+            aiLength <- getWord8
+            -- read additional length
+            src <- fmap parseKNXAddress $ getWord16be
+            dst <- fmap parseGroupAddress $ getWord16be
+            -- data length
+            tpci <- getWord8
+            apci <- getWord8
+            payload <- getLazyByteString (telegramLength - 8) -- Subtract 8 because we already read 4 * 2 bytes
+            return Telegram { messageCode = messageCode
+                            , additionalInfo = Nothing
+                            , srcField = Just src
+                            , dstField = dst
+                            , tpci = tpci
+                            , apci = apci
+                            , payload = payload
+                            }
 
 composeTelegram :: Telegram -> LBS.ByteString
-composeTelegram (Telegram t src dst cmdType cmd) = Put.runPut $ do
-    let encodedFields = Put.runPut $ putFields t src dst cmdType cmd
+composeTelegram telegram = Put.runPut $ do
+    let encodedFields = Put.runPut $ putFields telegram
     let encodedLength = fromIntegral $ LBS.length encodedFields :: Word16
     Put.putWord16be encodedLength
     Put.putLazyByteString encodedFields
     where
-        putFields t src dst cmdType cmd = do
-            Put.putWord16be t
+        putFields (Telegram messageCode additionalInfo src dst tpci apci payload) = do
+            Put.putWord8 messageCode
+            case additionalInfo of
+                Just ai -> do
+                    Put.putWord8 $ fromIntegral $ LBS.length ai
+                    Put.putLazyByteString ai
+                Nothing -> Put.putWord8 0
             Put.putWord16be $ encodeGroupAddress dst
-            Put.putWord16be cmdType
-            Put.putLazyByteString cmd
+            Put.putWord8 tpci
+            Put.putWord8 apci
+            Put.putLazyByteString payload
