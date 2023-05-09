@@ -142,6 +142,6 @@ composeTelegram (Telegram t src dst cmdType cmd) = Put.runPut $ do
     where
         putFields t src dst cmdType cmd = do
             Put.putWord16be t
-            Put.putWord16be $ composeGroupAddress dst
+            Put.putWord16be $ encodeGroupAddress dst
             Put.putWord16be cmdType
             Put.putLazyByteString cmd
