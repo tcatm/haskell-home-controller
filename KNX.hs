@@ -56,7 +56,7 @@ knxLoop knx buffer = do
     if LBS.null lazyMsg
         then putStrLn "Connection closed by the server"
     else do
-        putStrLn $ "Received: " ++ hexWithSpaces newBuffer
+        -- putStrLn $ "Received: " ++ hexWithSpaces newBuffer
         case parseTelegram newBuffer of
             Left err -> do
                 knxLoop knx newBuffer
@@ -92,7 +92,7 @@ disconnectKnx knxConnection = do
 sendTelegram :: KNXConnection -> Telegram -> IO ()
 sendTelegram knxConnection telegram = do
     let msg = composeTelegram telegram
-    putStrLn $ "Sending: " ++ hexWithSpaces msg
+    -- putStrLn $ "Sending: " ++ hexWithSpaces msg
     _ <- send (sock knxConnection) (LBS.toStrict msg)
     return ()
 
@@ -135,9 +135,8 @@ parseTelegram input =
 
         getTelegramData :: Int64 -> Get Telegram
         getTelegramData telegramLength = do
+            _ <- getWord8
             messageCode <- getWord8
-            aiLength <- getWord8
-            -- read additional length
             src <- fmap parseKNXAddress $ getWord16be
             dst <- fmap parseGroupAddress $ getWord16be
             -- data length
@@ -161,12 +160,8 @@ composeTelegram telegram = Put.runPut $ do
     Put.putLazyByteString encodedFields
     where
         putFields (Telegram messageCode additionalInfo src dst tpci apci payload) = do
+            Put.putWord8 0x00
             Put.putWord8 messageCode
-            case additionalInfo of
-                Just ai -> do
-                    Put.putWord8 $ fromIntegral $ LBS.length ai
-                    Put.putLazyByteString ai
-                Nothing -> Put.putWord8 0
             Put.putWord16be $ encodeGroupAddress dst
             Put.putWord8 tpci
             Put.putWord8 apci
