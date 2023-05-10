@@ -4,12 +4,10 @@ module KNX
     , disconnectKnx
     , sendTelegram
     , runKnxLoop
-    , Telegram (..)
     , KNXConnection (..)
     ) where
 
-import KNXAddress
-import APDU
+import Telegram
 
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
 import Network.Socket.ByteString (send, recv)
@@ -51,13 +49,21 @@ knxLoop knx buffer = do
     if LBS.null lazyMsg
         then putStrLn "Connection closed by the server"
     else do
-        -- putStrLn $ "Received: " ++ hexWithSpaces newBuffer
-        case parseTelegram newBuffer of
-            Left err -> do
+        let msgLength = fromIntegral $ runGet getWord16be newBuffer
+        if msgLength > fromIntegral (LBS.length newBuffer)
+            then do
                 knxLoop knx newBuffer
-            Right telegram -> do
-                putStrLn $ "Received: " ++ show telegram
-                knxLoop knx LBS.empty -- reset the buffer
+        else do
+            let msg = LBS.drop 2 newBuffer
+            let (telegramBytes, rest) = LBS.splitAt msgLength msg
+            let messageCode = runGet getWord16be telegramBytes
+            if messageCode == 0x27
+                then do
+                let telegram = decode telegramBytes :: Telegram
+                putStrLn $ "Received telegram: " ++ show telegram
+            else do
+                putStrLn $ "Received unknown message code: " ++ show messageCode
+            knxLoop knx rest
 
 eibOpenGroupconMessage :: LBS.ByteString
 eibOpenGroupconMessage = runPut $ do
@@ -86,66 +92,7 @@ disconnectKnx knxConnection = do
 
 sendTelegram :: KNXConnection -> Telegram -> IO ()
 sendTelegram knxConnection telegram = do
-    let msg = composeTelegram telegram
+    let msg = composeMessage $ encode telegram
     -- putStrLn $ "Sending: " ++ hexWithSpaces msg
     _ <- send (sock knxConnection) (LBS.toStrict msg)
     return ()
-
-data Telegram = Telegram
-    { messageCode :: Word8
-    , additionalInfo :: Maybe LBS.ByteString
-    , srcField :: Maybe KNXAddress
-    , dstField :: GroupAddress
-    , apdu :: APDU
-    }
-
-instance Show Telegram where
-  show (Telegram messageCode additionalInfo src dst apdu) = concat
-    [ "Telegram { "
-    , "messageCode = ", show messageCode, ", "
-    , "additionalInfo = ", show additionalInfo, ", "
-    , "src = ", show src, ", "
-    , "dst = ", show dst, ", "
-    , "apdu = ", show apdu
-    , " }"
-    ]
-
-parseTelegram :: LBS.ByteString -> Either String Telegram
-parseTelegram input =
-    case runGetOrFail getLength input of
-        Left (_, _, err) -> Left err
-        Right (remainingInput, _, lengthVal) ->
-            case runGetOrFail (getTelegramData (fromIntegral lengthVal)) remainingInput of
-            Left (_, _, err) -> Left err
-            Right (_, _, telegram) -> Right telegram
-    where
-        getLength :: Get Word16
-        getLength = getWord16be
-
-        getTelegramData :: Int -> Get Telegram
-        getTelegramData telegramLength = do
-            _ <- getWord8
-            messageCode <- getWord8
-            src <- fmap parseKNXAddress $ getWord16be
-            dst <- fmap parseGroupAddress $ getWord16be
-            -- data length
-            apdu <- decode <$> getRemainingLazyByteString
-            return Telegram { messageCode = messageCode
-                            , additionalInfo = Nothing
-                            , srcField = Just src
-                            , dstField = dst
-                            , apdu = apdu
-                            }
-
-composeTelegram :: Telegram -> LBS.ByteString
-composeTelegram telegram = runPut $ do
-    let encodedFields = runPut $ putFields telegram
-    let encodedLength = fromIntegral $ LBS.length encodedFields :: Word16
-    putWord16be encodedLength
-    putLazyByteString encodedFields
-    where
-        putFields (Telegram messageCode additionalInfo src dst apdu) = do
-            putWord8 0x00
-            putWord8 messageCode
-            putWord16be $ encodeGroupAddress dst
-            putLazyByteString $ encode apdu

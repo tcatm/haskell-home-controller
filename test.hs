@@ -7,6 +7,7 @@ import Text.Read (readMaybe)
 import Control.Concurrent (forkIO)
 import KNXAddress
 import APDU
+import Telegram
 import KNX
 import Data.Time.Clock (UTCTime, getCurrentTime, utctDayTime, utctDay)
 import Data.Time.LocalTime (TimeOfDay, timeOfDayToTime, timeToTimeOfDay)
@@ -30,13 +31,12 @@ stdinLoop handle knx = do
       putStrLn $ "Parsed Byte List: " ++ show byteList
       let telegram = Telegram
             { messageCode = 39
-            , additionalInfo = Nothing
             , srcField = Nothing
             , dstField = groupAddress
             , apdu = APDU
-              { apci = 0x00
-              , tpci = 0x80
-              , payload = pack (map fromIntegral byteList)
+              { tpci = 0x00
+              , apci = 0x80
+              , payload = byteList
               }
             } 
       putStrLn $ show telegram
@@ -46,7 +46,7 @@ stdinLoop handle knx = do
 
   stdinLoop handle knx
 
-parseInput :: [String] -> Maybe (GroupAddress, [Int])
+parseInput :: [String] -> Maybe (GroupAddress, [Word8])
 parseInput (groupAddressStr:byteStrs) = do
   groupAddress <- parseGroupAddressStr groupAddressStr
   bytes <- traverse readMaybe byteStrs
@@ -81,13 +81,12 @@ timeSenderLoop knx = do
   let timeBytes = timeToBytes time
   let telegram = Telegram
         { messageCode = 39
-        , additionalInfo = Nothing
         , srcField = Nothing
         , dstField = GroupAddress 0 0 1
         , apdu = APDU
-          { apci = 0x00
-          , tpci = 0x80
-          , payload = pack timeBytes
+          { tpci = 0x00
+          , apci = 0x80
+          , payload = timeBytes
           }
         }
   putStrLn $ show telegram
@@ -95,13 +94,12 @@ timeSenderLoop knx = do
   let dateBytes = dateToBytes time
   let dateTelegram = Telegram
         { messageCode = 39
-        , additionalInfo = Nothing
         , srcField = Nothing
         , dstField = GroupAddress 0 0 2
         , apdu = APDU
-          { apci = 0x00
-          , tpci = 0x80
-          , payload = pack dateBytes
+          { tpci = 0x00
+          , apci = 0x80
+          , payload = dateBytes
           }
         }
   putStrLn $ show dateTelegram
