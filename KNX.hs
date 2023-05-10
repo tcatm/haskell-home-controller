@@ -2,12 +2,16 @@ module KNX
     ( knxLoop
     , connectKnx
     , disconnectKnx
+    , groupWrite
     , sendTelegram
     , runKnxLoop
     , KNXConnection (..)
     ) where
 
 import Telegram
+import APDU
+import DPTs
+import KNXAddress
 
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
 import Network.Socket.ByteString (send, recv)
@@ -95,4 +99,18 @@ sendTelegram knxConnection telegram = do
     let msg = composeMessage $ encode telegram
     -- putStrLn $ "Sending: " ++ hexWithSpaces msg
     _ <- send (sock knxConnection) (LBS.toStrict msg)
+    return ()
+
+groupWrite :: KNXConnection -> GroupAddress -> DPT -> IO ()
+groupWrite knxConnection groupAddress dpt = do
+    let telegram = Telegram { messageCode = 39
+                            , srcField = Nothing
+                            , dstField = groupAddress
+                            , apdu = APDU { tpci = 0x00
+                                          , apci = 0x80
+                                          , payload = dpt
+                                          }
+                            }
+    putStrLn $ "Sending telegram: " ++ show telegram
+    sendTelegram knxConnection telegram
     return ()
