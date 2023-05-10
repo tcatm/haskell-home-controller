@@ -1,18 +1,12 @@
 
-import Control.Exception (try, SomeException)
 import System.IO
-import Control.Monad (unless)
-import Data.Maybe (fromJust, isJust)
-import Data.Word
-import Data.Bits
-import Data.ByteString.Char8 (pack, unpack)
-import qualified Data.Binary.Put as Put
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString as BS
+import Data.Binary
+import Data.ByteString.Lazy (unpack, pack)
 import Text.Printf (printf)
 import Text.Read (readMaybe)
 import Control.Concurrent (forkIO)
 import KNXAddress
+import APDU
 import KNX
 import Data.Time.Clock (UTCTime, getCurrentTime, utctDayTime, utctDay)
 import Data.Time.LocalTime (TimeOfDay, timeOfDayToTime, timeToTimeOfDay)
@@ -39,9 +33,11 @@ stdinLoop handle knx = do
             , additionalInfo = Nothing
             , srcField = Nothing
             , dstField = groupAddress
-            , tpci = 0x00
-            , apci = 0x80
-            , payload = LBS.pack (map fromIntegral byteList)
+            , apdu = APDU
+              { apci = 0x00
+              , tpci = 0x80
+              , payload = pack (map fromIntegral byteList)
+              }
             } 
       putStrLn $ show telegram
       sendTelegram knx telegram
@@ -88,10 +84,12 @@ timeSenderLoop knx = do
         , additionalInfo = Nothing
         , srcField = Nothing
         , dstField = GroupAddress 0 0 1
-        , tpci = 0x00
-        , apci = 0x80
-        , payload = LBS.pack timeBytes
-        } 
+        , apdu = APDU
+          { apci = 0x00
+          , tpci = 0x80
+          , payload = pack timeBytes
+          }
+        }
   putStrLn $ show telegram
   sendTelegram knx telegram
   let dateBytes = dateToBytes time
@@ -100,9 +98,11 @@ timeSenderLoop knx = do
         , additionalInfo = Nothing
         , srcField = Nothing
         , dstField = GroupAddress 0 0 2
-        , tpci = 0x00
-        , apci = 0x80
-        , payload = LBS.pack dateBytes
+        , apdu = APDU
+          { apci = 0x00
+          , tpci = 0x80
+          , payload = pack dateBytes
+          }
         }
   putStrLn $ show dateTelegram
   sendTelegram knx dateTelegram
