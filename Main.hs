@@ -10,17 +10,21 @@ import KNXAddress
 import APDU
 import KNX
 import DPTs
+import TimeSender
 import Data.Time.Clock (UTCTime, getCurrentTime, utctDayTime, utctDay)
 import Data.Time.LocalTime (TimeOfDay, timeOfDayToTime, timeToTimeOfDay)
-import Data.Time.Calendar (toGregorian)
+import Data.Time.Calendar
 import Data.Time
-import Control.Concurrent (threadDelay)
+import Data.Time.Calendar.WeekDate
+import Control.Concurrent
+import Control.Monad
 
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
 
 stdinLoop :: Handle -> KNXConnection -> IO ()
-stdinLoop handle knx = do
+stdinLoop handle knx = 
+  forever $ do
   line <- hGetLine handle
   putStrLn $ "Received from stdin: " ++ line
   -- Parse "1/2/3 0 0 0 ..." to KNXAdress + List of integers
@@ -32,8 +36,6 @@ stdinLoop handle knx = do
       groupWrite knx groupAddress dpt
       return ()
     Nothing -> putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
-
-  stdinLoop handle knx
 
 -- Parse a String like: 0/1/2 DPT1 True
 parseInput :: [String] -> Maybe (GroupAddress, DPT)
@@ -74,54 +76,33 @@ parseInput (groupAddressStr:dptName:value) = do
     readBoolTuple _ = error "Failed to parse bool tuple"
 parseInput _ = Nothing
 
+-- Define a helper function to create a thread and return an MVar
+forkIOWithSync :: IO () -> IO (MVar ())
+forkIOWithSync action = do
+  syncVar <- newEmptyMVar
+  forkIO $ action >> putMVar syncVar ()
+  return syncVar
+
+-- Define the main function to create and synchronize threads for a list of actions
+waitAllThreads :: [IO ()] -> IO ()
+waitAllThreads actions = do
+  syncVars <- mapM forkIOWithSync actions
+  sequence_ (map takeMVar syncVars)
+
 main :: IO ()
 main = do
   knx <- connectKnx knxGatewayHost knxGatewayPort
   putStrLn "Connected to KNX gateway."
 
-  knxThread <- forkIO $ runKnxLoop knx
-  timeThread <- forkIO $ timeSender knx
+  let timeSenderConfig = TimeSenderConfig {
+    timeGA = GroupAddress 0 0 1,
+    dateGA = GroupAddress 0 0 2,
+    intervalSeconds = 10
+  }
 
-  stdinLoop stdin knx
+  let actions = [runKnxLoop knx, timeSender timeSenderConfig knx, stdinLoop stdin knx]
+
+  waitAllThreads actions
 
   disconnectKnx knx
   putStrLn "Closed connection."
-
-
--- Time sender thread
--- Get the current time and send it to the KNX gateway every second
-timeSender :: KNXConnection -> IO ()
-timeSender knx = do
-  putStrLn "Starting time sender thread"
-  timeSenderLoop knx
-
-timeSenderLoop :: KNXConnection -> IO ()
-timeSenderLoop knx = do
-  putStrLn "Sending time"
-  time <- getCurrentTime
-  let timeBytes = timeToBytes time
-  let dptTime = DPT10 timeBytes
-  groupWrite knx (GroupAddress 0 0 1) dptTime 
-
-  let dateBytes = dateToBytes time
-  let dptDate = DPT11 dateBytes
-  groupWrite knx (GroupAddress 0 0 2) dptDate
-  threadDelay 5000000
-  timeSenderLoop knx
-
-timeToBytes :: UTCTime -> (Word, Word, Word, Word)
-timeToBytes time = (0, hour, minute, second)
-  where
-    dayTime = utctDayTime time
-    TimeOfDay h m s = timeToTimeOfDay dayTime
-    hour = fromIntegral h
-    minute = fromIntegral m
-    second = floor s
-
-dateToBytes :: UTCTime -> (Word, Word, Word)
-dateToBytes date = (day, month, year)
-  where
-    (y, m, d) = toGregorian $ utctDay date
-    day = fromIntegral d
-    month = fromIntegral m
-    year = fromIntegral (y `mod` 100)
