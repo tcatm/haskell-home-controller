@@ -76,16 +76,29 @@ parseInput (groupAddressStr:dptName:value) = do
     readBoolTuple _ = error "Failed to parse bool tuple"
 parseInput _ = Nothing
 
--- This thread receives messages from the KNX bus.
-workerLoop :: MVar GroupMessage -> IO ()
-workerLoop queue = forever $ do
-  GroupMessage groupAddress dpt <- takeMVar queue
-  putStrLn $ "Received from KNX: " ++ show groupAddress ++ " " ++ show dpt
+runWorkerLoop :: KNXConnection -> [Device Int ()] -> MVar GroupMessage -> IO ()
+runWorkerLoop knx devices queue = do
+  -- devices with their initial state
+  let devicesWithState = map (\device -> (device, 0)) devices
+  workerLoop knx devicesWithState queue
 
-  if groupAddress == GroupAddress 1 1 23
-    then putStrLn $ "Received light 23: " ++ show dpt
-    else return ()
+workerLoop :: KNXConnection -> [(Device Int (), Int)] -> MVar GroupMessage -> IO ()
+workerLoop knx devices queue = do
+  msg <- takeMVar queue
+  putStrLn $ "Received from KNX: " ++ show msg
 
+  newDevices <- mapM (\(device, state) -> do
+      let (_, newState, outputMessages) = runDevice device state msg
+      mapM_ (\outputMessage -> do
+        putStrLn $ "Output message: " ++ show outputMessage
+        putStrLn $ "New state: " ++ show newState
+
+        -- Send the output messages to the KNX bus
+        groupWrite knx outputMessage
+        ) outputMessages
+      return (device, newState)
+    ) devices
+  workerLoop knx newDevices queue
 
 -- Define a helper function to create a thread and return an MVar
 forkIOWithSync :: IO () -> IO (MVar ())
@@ -113,13 +126,57 @@ main = do
 
   knxQueue <- newEmptyMVar
 
+  let devices = [sampleDevice]
+
   let actions = [ runKnxLoop knx knxQueue
                 , timeSender timeSenderConfig knx
                 , stdinLoop stdin knx
-                , workerLoop $ knxQueue
+                , runWorkerLoop knx devices $ knxQueue
                 ]
 
   waitAllThreads actions
 
   disconnectKnx knx
   putStrLn "Closed connection."
+
+data Device s a = Device { runDevice :: s -> GroupMessage -> (a, s, [GroupMessage]) }
+
+instance Functor (Device s) where
+    fmap f device = Device $ \s msg -> 
+        let (a, s', msgs) = runDevice device s msg
+        in (f a, s', msgs)
+
+instance Applicative (Device s) where
+    pure a = Device $ \s _ -> (a, s, [])
+    deviceF <*> deviceA = Device $ \s msg ->
+        let (f, s', msgsF) = runDevice deviceF s msg
+            (a, s'', msgsA) = runDevice deviceA s' msg
+        in (f a, s'', msgsF ++ msgsA)
+
+instance Monad (Device s) where
+    device >>= f = Device $ \s msg ->
+        let (a, s', msgs) = runDevice device s msg
+            Device g = f a
+            (a', s'', msgs') = g s' msg
+        in (a', s'', msgs ++ msgs')
+
+getState :: Device s s
+getState = Device $ \s _ -> (s, s, [])
+
+modifyState :: (s -> s) -> Device s ()
+modifyState f = Device $ \s _ -> ((), f s, [])
+
+sendMessage :: GroupMessage -> Device s ()
+sendMessage msg = Device $ \s _ -> ((), s, [msg])
+
+getInputMessage :: Device s GroupMessage
+getInputMessage = Device $ \s msg -> (msg, s, [])
+
+sampleDevice :: Device Int ()
+sampleDevice = do
+    msg <- getInputMessage
+    case msg of
+      GroupMessage (GroupAddress 0 1 11) dpt -> do
+        modifyState (+1)
+        sendMessage $ GroupMessage (GroupAddress 0 1 2) dpt
+      _ -> return ()
