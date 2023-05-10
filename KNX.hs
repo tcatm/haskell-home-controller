@@ -6,6 +6,7 @@ module KNX
     , sendTelegram
     , runKnxLoop
     , KNXConnection (..)
+    , GroupMessage (..)
     ) where
 
 import Telegram
@@ -20,6 +21,8 @@ import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
 import Text.Printf (printf)
+import Control.Monad
+import Control.Concurrent.MVar
 
 eibOpenGroupcon = 0x26
 
@@ -27,6 +30,11 @@ data KNXConnection = KNXConnection
     { host :: HostName
     , port :: ServiceName
     , sock :: Socket
+    } deriving (Show)
+
+data GroupMessage = GroupMessage
+    { groupAddress :: GroupAddress
+    , dpt :: DPT
     } deriving (Show)
 
 hexWithSpaces :: LBS.ByteString -> String
@@ -40,13 +48,13 @@ createTCPConnection host port = do
     connect sock (addrAddress serverAddr)
     return sock
 
-runKnxLoop :: KNXConnection -> IO ()
-runKnxLoop knx = do
+runKnxLoop :: KNXConnection -> MVar GroupMessage -> IO ()
+runKnxLoop knx mVar = do
     putStrLn "Starting KNX loop"
-    knxLoop knx LBS.empty
+    knxLoop knx mVar LBS.empty
 
-knxLoop :: KNXConnection -> LBS.ByteString -> IO ()
-knxLoop knx buffer = do
+knxLoop :: KNXConnection -> MVar GroupMessage -> LBS.ByteString -> IO ()
+knxLoop knx mVar buffer = do
     msg <- recv (sock knx) 1024
     let lazyMsg = LBS.fromStrict msg
     let newBuffer = LBS.append buffer lazyMsg
@@ -56,7 +64,7 @@ knxLoop knx buffer = do
         let msgLength = fromIntegral $ runGet getWord16be newBuffer
         if msgLength > fromIntegral (LBS.length newBuffer)
             then do
-                knxLoop knx newBuffer
+                knxLoop knx mVar newBuffer
         else do
             let msg = LBS.drop 2 newBuffer
             let (telegramBytes, rest) = LBS.splitAt msgLength msg
@@ -64,10 +72,15 @@ knxLoop knx buffer = do
             if messageCode == 0x27
                 then do
                 let telegram = decode telegramBytes :: Telegram
-                putStrLn $ "Received telegram: " ++ show telegram
+                -- putStrLn $ "Received telegram: " ++ show telegram
+                case apdu telegram of
+                    APDU { apci = 0x80, payload = dpt } -> do
+                        let groupAddress = dstField telegram
+                        putMVar mVar GroupMessage { groupAddress = groupAddress, dpt = dpt }
+                    _ -> return ()
             else do
                 putStrLn $ "Received unknown message code: " ++ show messageCode
-            knxLoop knx rest
+            knxLoop knx mVar rest
 
 eibOpenGroupconMessage :: LBS.ByteString
 eibOpenGroupconMessage = runPut $ do
@@ -101,8 +114,8 @@ sendTelegram knxConnection telegram = do
     _ <- send (sock knxConnection) (LBS.toStrict msg)
     return ()
 
-groupWrite :: KNXConnection -> GroupAddress -> DPT -> IO ()
-groupWrite knxConnection groupAddress dpt = do
+groupWrite :: KNXConnection -> GroupMessage -> IO ()
+groupWrite knxConnection (GroupMessage groupAddress dpt) = do
     let telegram = Telegram { messageCode = 39
                             , srcField = Nothing
                             , dstField = groupAddress
