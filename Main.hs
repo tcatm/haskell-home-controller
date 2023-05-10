@@ -33,7 +33,7 @@ stdinLoop handle knx =
     Just (groupAddress, dpt) -> do
       -- Do something with the parsed values
       putStrLn $ "Parsed: " ++ show groupAddress ++ " " ++ show dpt
-      groupWrite knx groupAddress dpt
+      groupWrite knx $ GroupMessage groupAddress dpt
       return ()
     Nothing -> putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 
@@ -76,6 +76,17 @@ parseInput (groupAddressStr:dptName:value) = do
     readBoolTuple _ = error "Failed to parse bool tuple"
 parseInput _ = Nothing
 
+-- This thread receives messages from the KNX bus.
+workerLoop :: MVar GroupMessage -> IO ()
+workerLoop queue = forever $ do
+  GroupMessage groupAddress dpt <- takeMVar queue
+  putStrLn $ "Received from KNX: " ++ show groupAddress ++ " " ++ show dpt
+
+  if groupAddress == GroupAddress 1 1 23
+    then putStrLn $ "Received light 23: " ++ show dpt
+    else return ()
+
+
 -- Define a helper function to create a thread and return an MVar
 forkIOWithSync :: IO () -> IO (MVar ())
 forkIOWithSync action = do
@@ -100,7 +111,13 @@ main = do
     intervalSeconds = 10
   }
 
-  let actions = [runKnxLoop knx, timeSender timeSenderConfig knx, stdinLoop stdin knx]
+  knxQueue <- newEmptyMVar
+
+  let actions = [ runKnxLoop knx knxQueue
+                , timeSender timeSenderConfig knx
+                , stdinLoop stdin knx
+                , workerLoop $ knxQueue
+                ]
 
   waitAllThreads actions
 

@@ -29,11 +29,11 @@ timeSender conf knx = do
     time <- zonedTimeToLocalTime <$> getZonedTime
     let timeBytes = timeToBytes time
     let dptTime = DPT10 timeBytes
-    groupWrite knx (timeGA conf) dptTime 
+    groupWrite knx $ GroupMessage (timeGA conf) dptTime 
 
     let dateBytes = dateToBytes time
     let dptDate = DPT11 dateBytes
-    groupWrite knx (dateGA conf) dptDate
+    groupWrite knx $ GroupMessage (dateGA conf) dptDate
     threadDelay $ 1000000 * (intervalSeconds conf)
 
 timeToBytes :: LocalTime -> (Word, Word, Word, Word)
