@@ -9,20 +9,15 @@ module KNX
     ) where
 
 import KNXAddress
+import APDU
 
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
 import Network.Socket.ByteString (send, recv)
-import qualified Data.Binary.Put as Put
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString as BS
+import Data.Binary
 import Data.Binary.Get
-import Data.Word
-import Data.Int
-import Data.Bits
-import Data.Maybe (fromJust, isJust)
-import Data.ByteString.Char8 (pack, unpack)
+import Data.Binary.Put
 import Text.Printf (printf)
-import Text.Read (readMaybe)
 
 eibOpenGroupcon = 0x26
 
@@ -65,16 +60,16 @@ knxLoop knx buffer = do
                 knxLoop knx LBS.empty -- reset the buffer
 
 eibOpenGroupconMessage :: LBS.ByteString
-eibOpenGroupconMessage = Put.runPut $ do
-    Put.putWord16be $ fromIntegral eibOpenGroupcon
-    Put.putWord16be 0
-    Put.putWord8 0
+eibOpenGroupconMessage = runPut $ do
+    putWord16be $ fromIntegral eibOpenGroupcon
+    putWord16be 0
+    putWord8 0
 
 composeMessage :: LBS.ByteString -> LBS.ByteString
-composeMessage msg = Put.runPut $ do
+composeMessage msg = runPut $ do
     let msgLength = fromIntegral $ LBS.length msg
-    Put.putWord16be $ fromIntegral msgLength
-    Put.putLazyByteString msg
+    putWord16be $ fromIntegral msgLength
+    putLazyByteString msg
 
 connectKnx :: HostName -> ServiceName -> IO KNXConnection
 connectKnx host port = do
@@ -101,25 +96,19 @@ data Telegram = Telegram
     , additionalInfo :: Maybe LBS.ByteString
     , srcField :: Maybe KNXAddress
     , dstField :: GroupAddress
-    , tpci :: Word8
-    , apci :: Word8
-    , payload :: LBS.ByteString
+    , apdu :: APDU
     }
 
 instance Show Telegram where
-  show (Telegram messageCode additionalInfo src dst tpci apci payload) = concat
+  show (Telegram messageCode additionalInfo src dst apdu) = concat
     [ "Telegram { "
     , "messageCode = ", show messageCode, ", "
     , "additionalInfo = ", show additionalInfo, ", "
     , "src = ", show src, ", "
     , "dst = ", show dst, ", "
-    , "tpci = ", show tpci, ", "
-    , "apci = ", show apci, ", "
-    , "payload = ", showByteString payload, " }"
+    , "apdu = ", show apdu
+    , " }"
     ]
-    where
-      showByteString :: LBS.ByteString -> String
-      showByteString lbs = show (LBS.unpack lbs :: [Word8])
 
 parseTelegram :: LBS.ByteString -> Either String Telegram
 parseTelegram input =
@@ -133,36 +122,30 @@ parseTelegram input =
         getLength :: Get Word16
         getLength = getWord16be
 
-        getTelegramData :: Int64 -> Get Telegram
+        getTelegramData :: Int -> Get Telegram
         getTelegramData telegramLength = do
             _ <- getWord8
             messageCode <- getWord8
             src <- fmap parseKNXAddress $ getWord16be
             dst <- fmap parseGroupAddress $ getWord16be
             -- data length
-            tpci <- getWord8
-            apci <- getWord8
-            payload <- getLazyByteString (telegramLength - 8) -- Subtract 8 because we already read 4 * 2 bytes
+            apdu <- decode <$> getRemainingLazyByteString
             return Telegram { messageCode = messageCode
                             , additionalInfo = Nothing
                             , srcField = Just src
                             , dstField = dst
-                            , tpci = tpci
-                            , apci = apci
-                            , payload = payload
+                            , apdu = apdu
                             }
 
 composeTelegram :: Telegram -> LBS.ByteString
-composeTelegram telegram = Put.runPut $ do
-    let encodedFields = Put.runPut $ putFields telegram
+composeTelegram telegram = runPut $ do
+    let encodedFields = runPut $ putFields telegram
     let encodedLength = fromIntegral $ LBS.length encodedFields :: Word16
-    Put.putWord16be encodedLength
-    Put.putLazyByteString encodedFields
+    putWord16be encodedLength
+    putLazyByteString encodedFields
     where
-        putFields (Telegram messageCode additionalInfo src dst tpci apci payload) = do
-            Put.putWord8 0x00
-            Put.putWord8 messageCode
-            Put.putWord16be $ encodeGroupAddress dst
-            Put.putWord8 tpci
-            Put.putWord8 apci
-            Put.putLazyByteString payload
+        putFields (Telegram messageCode additionalInfo src dst apdu) = do
+            putWord8 0x00
+            putWord8 messageCode
+            putWord16be $ encodeGroupAddress dst
+            putLazyByteString $ encode apdu
