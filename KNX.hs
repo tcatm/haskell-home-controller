@@ -23,6 +23,7 @@ import Control.Monad
 import Control.Concurrent.MVar
 import Control.Monad.Trans.State
 import Control.Monad.IO.Class
+import Control.Monad.Trans.Reader
 
 eibOpenGroupcon = 0x26
 

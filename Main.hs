@@ -87,17 +87,7 @@ workerLoop knx devices queue = do
   msg <- takeMVar queue
   putStrLn $ "Received from KNX: " ++ show msg
 
-  newDevices <- mapM (\(device, state) -> do
-      let (_, newState, outputMessages) = runDevice device state msg
-      mapM_ (\outputMessage -> do
-        putStrLn $ "Output message: " ++ show outputMessage
-        putStrLn $ "New state: " ++ show newState
-
-        -- Send the output messages to the KNX bus
-        groupWrite knx outputMessage
-        ) outputMessages
-      return (device, newState)
-    ) devices
+  newDevices <- mapM (processDeviceState knx msg) devices
   workerLoop knx newDevices queue
 
 -- Define a helper function to create a thread and return an MVar
@@ -171,6 +161,21 @@ sendMessage msg = Device $ \s _ -> ((), s, [msg])
 
 getInputMessage :: Device s GroupMessage
 getInputMessage = Device $ \s msg -> (msg, s, [])
+
+processDeviceState :: KNXConnection -> GroupMessage -> (Device Int (), Int) -> IO (Device Int (), Int)
+processDeviceState knx msg (device, state) = do
+  let (_, newState, outputMessages) = runDevice device state msg
+  performDeviceActions knx outputMessages
+  when (newState /= state) $ putStrLn $ "New state: " ++ show newState
+  return (device, newState)
+
+performDeviceActions :: KNXConnection -> [GroupMessage] -> IO ()
+performDeviceActions knx outputMessages = do
+    mapM_ (\outputMessage -> do
+          putStrLn $ "Output message: " ++ show outputMessage
+          -- Send the output messages to the KNX bus
+          groupWrite knx outputMessage
+          ) outputMessages
 
 sampleDevice :: Device Int ()
 sampleDevice = do
