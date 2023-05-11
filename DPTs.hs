@@ -1,5 +1,13 @@
 module DPTs
     ( DPT (..)
+    , EncodedDPT (..)
+    , parseDPT
+    , encodeDPT
+    , parseDPT1
+    , parseDPT2
+    , parseDPT3
+    , parseDPT5
+    , parseDPT18_1
     ) where
 
 import Data.Binary
@@ -7,6 +15,8 @@ import Data.Binary.Get
 import Data.Binary.Put
 import Data.Word
 import Data.Int
+import Data.Bits
+import qualified Data.ByteString.Lazy as LBS
 
 data DPT = DPT1 Bool -- short
          | DPT2 (Bool, Bool) --short
@@ -24,4 +34,64 @@ data DPT = DPT1 Bool -- short
          | DPT14 Float
          | DPT15 Word32
          | DPT16 String
+         | DPT18_1 (Bool, Int)
             deriving (Eq, Show)
+
+data EncodedDPT = EncodedDPT LBS.ByteString Bool deriving (Show)
+
+encodeDPT :: DPT -> EncodedDPT
+encodeDPT dpt =
+    let (result, bool) = case dpt of
+                            DPT1 v -> (putWord8 $ if v then 0x01 else 0x00, True)
+                            DPT2 v -> (putWord8 $ (if fst v then 0x02 else 0x00) .|. (if snd v then 0x01 else 0x00), True)
+                            DPT3 v ->
+                                let limitedV = max (-8) (min 7 v)
+                                    word8V = fromIntegral limitedV :: Word8
+                                    signBit = (word8V `shiftR` 4) .&. 0x08
+                                    dataBits = word8V .&. 0x07
+                                in (putWord8 $ signBit .|. dataBits, True)
+                            DPT4 v -> (putWord8 $ fromIntegral $ fromEnum v, False)
+                            DPT5 v -> (putWord8 v, False)
+                            DPT6 v -> (putWord8 $ fromIntegral v, False)
+                            DPT7 v -> (putWord16be v, False)
+                            DPT8 v -> (putWord16be $ fromIntegral v, False)
+                            DPT10 (a, b, c, d) ->
+                                ( do
+                                    putWord8 $ fromIntegral $ (a `shiftL` 5) .|. b
+                                    putWord8 $ fromIntegral c
+                                    putWord8 $ fromIntegral d
+                                , False)
+                            DPT11 (a, b, c) ->
+                                ( do
+                                    putWord8 $ fromIntegral a
+                                    putWord8 $ fromIntegral b
+                                    putWord8 $ fromIntegral c
+                                , False)
+                            DPT12 v -> (putWord32be v, False)
+                            DPT13 v -> (putWord32be $ fromIntegral v, False)
+                            DPT16 v -> (putStringUtf8 v, False)
+                            DPT18_1 (a, b) ->
+                                ( do
+                                    let byte = fromIntegral b :: Word8
+                                        c = if a then 0x80 else 0x00
+                                    putWord8 $ c .|. byte
+                                , False)
+    in EncodedDPT (runPut result) bool
+
+parseDPT :: Binary a => Get a
+parseDPT = get
+
+parseDPT1 :: Get DPT
+parseDPT1 = DPT1 . (/= (0 :: Word8)) <$> parseDPT
+
+parseDPT2 :: Get DPT
+parseDPT2 = (\v -> DPT2 ((v .&. 0x02 /= (0 :: Word8)), (v .&. 0x01 /= (0 :: Word8)))) <$> parseDPT
+
+parseDPT3 :: Get DPT
+parseDPT3 = (\v -> DPT3 $ fromIntegral (((v :: Word8) .&. 0x08 `shiftR` 4) .|. ((v :: Word8) .&. 0x07))) <$> parseDPT
+
+parseDPT5 :: Get DPT
+parseDPT5 = DPT5 <$> parseDPT
+
+parseDPT18_1 :: Get DPT
+parseDPT18_1 = (\v -> DPT18_1 (((v :: Word8) .&. 0x80 /= 0), fromIntegral $ (v :: Word8) .&. 0x7F)) <$> parseDPT

@@ -5,12 +5,13 @@ module KNX
     , runKnxLoop
     , KNXConnection (..)
     , GroupMessage (..)
+    , IncomingGroupMessage (..)
     ) where
 
 import Telegram
 import APDU
-import DPTs
 import KNXAddress
+import DPTs
 
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
 import Network.Socket.ByteString (send, recv)
@@ -33,6 +34,11 @@ data KNXConnection = KNXConnection
     , sock :: Socket
     } deriving (Show)
 
+data IncomingGroupMessage = IncomingGroupMessage
+    { incomingGroupAddress :: GroupAddress
+    , payload :: EncodedDPT
+    } deriving (Show)
+
 data GroupMessage = GroupMessage
     { groupAddress :: GroupAddress
     , dpt :: DPT
@@ -49,12 +55,12 @@ createTCPConnection host port = do
     connect sock (addrAddress serverAddr)
     return sock
 
-runKnxLoop :: KNXConnection -> MVar GroupMessage -> IO ()
+runKnxLoop :: KNXConnection -> MVar IncomingGroupMessage -> IO ()
 runKnxLoop knx mVar = do
     putStrLn "Starting KNX loop"
     evalStateT (loop knx mVar) LBS.empty
     where
-        loop :: KNXConnection -> MVar GroupMessage -> StateT LBS.ByteString IO ()
+        loop :: KNXConnection -> MVar IncomingGroupMessage -> StateT LBS.ByteString IO ()
         loop knx mVar = do
             input <- liftIO $ LBS.fromStrict <$> recv (sock knx) 1024
             if LBS.null input
@@ -65,7 +71,7 @@ runKnxLoop knx mVar = do
                     processInput input mVar
                     loop knx mVar
 
-processInput :: LBS.ByteString -> MVar GroupMessage -> StateT LBS.ByteString IO ()
+processInput :: LBS.ByteString -> MVar IncomingGroupMessage -> StateT LBS.ByteString IO ()
 processInput input mVar = do
     buffer <- get
 
@@ -84,17 +90,20 @@ processInput input mVar = do
             else return buffer'
     put newBuffer
 
-parseMessage :: LBS.ByteString -> Either String GroupMessage
+parseMessage :: LBS.ByteString -> Either String IncomingGroupMessage
 parseMessage msg = do
     let messageCode = runGet getWord16be msg
     case messageCode of
         0x27 -> do
             let telegram = B.decode msg :: Telegram
-            case apdu telegram of
-                APDU { apci = 0x80, payload = dpt } -> do
+                apci = APDU.apci $ apdu telegram
+            if apci /= 0x80
+                then Left $ "Received unknown APDU: " ++ show (apdu telegram)
+                else do
                     let groupAddress = dstField telegram
-                    Right $ GroupMessage { groupAddress = groupAddress, dpt = dpt }
-                _ -> Left $ "Received unknown APDU: " ++ show (apdu telegram)
+                    Right $ IncomingGroupMessage { incomingGroupAddress = groupAddress
+                                                 , KNX.payload = APDU.payload $ apdu telegram
+                                                 }
         _   -> Left $ "Received unknown message code: " ++ show messageCode
 
 eibOpenGroupconMessage :: LBS.ByteString
@@ -131,14 +140,14 @@ sendTelegram knxConnection telegram = do
 
 groupWrite :: KNXConnection -> GroupMessage -> IO ()
 groupWrite knxConnection (GroupMessage groupAddress dpt) = do
+    putStrLn $ "Writing " ++ show dpt ++ " to " ++ show groupAddress
     let telegram = Telegram { messageCode = 39
                             , srcField = Nothing
                             , dstField = groupAddress
                             , apdu = APDU { tpci = 0x00
                                           , apci = 0x80
-                                          , payload = dpt
+                                          , APDU.payload = encodeDPT dpt
                                           }
                             }
-    putStrLn $ "Sending telegram: " ++ show telegram
     sendTelegram knxConnection telegram
     return ()
