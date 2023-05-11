@@ -2,6 +2,7 @@ module Main where
 
 import System.IO
 import Data.Binary
+import Data.Binary.Get
 import Data.ByteString.Lazy (unpack, pack)
 import Text.Printf (printf)
 import Text.Read (readMaybe)
@@ -18,6 +19,7 @@ import Data.Time
 import Data.Time.Calendar.WeekDate
 import Control.Concurrent
 import Control.Monad
+import Data.Maybe
 
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
@@ -59,6 +61,7 @@ parseInput (groupAddressStr:dptName:value) = do
               "DPT14" -> DPT14 $ read $ head value
               "DPT15" -> DPT15 $ read $ head value
               "DPT16" -> DPT16 $ head value
+              "DPT18_1" -> DPT18_1 $ (False, read $ head value)
 
   return (groupAddress, dpt)
 
@@ -76,13 +79,13 @@ parseInput (groupAddressStr:dptName:value) = do
     readBoolTuple _ = error "Failed to parse bool tuple"
 parseInput _ = Nothing
 
-runWorkerLoop :: KNXConnection -> [Device Int ()] -> MVar GroupMessage -> IO ()
+runWorkerLoop :: KNXConnection -> [Device Int ()] -> MVar IncomingGroupMessage -> IO ()
 runWorkerLoop knx devices queue = do
   -- devices with their initial state
   let devicesWithState = map (\device -> (device, 0)) devices
   workerLoop knx devicesWithState queue
 
-workerLoop :: KNXConnection -> [(Device Int (), Int)] -> MVar GroupMessage -> IO ()
+workerLoop :: KNXConnection -> [(Device Int (), Int)] -> MVar IncomingGroupMessage -> IO ()
 workerLoop knx devices queue = do
   msg <- takeMVar queue
   putStrLn $ "Received from KNX: " ++ show msg
@@ -129,7 +132,7 @@ main = do
   disconnectKnx knx
   putStrLn "Closed connection."
 
-data Device s a = Device { runDevice :: s -> GroupMessage -> (a, s, [GroupMessage]) }
+data Device s a = Device { runDevice :: s -> IncomingGroupMessage -> (a, s, [GroupMessage]) }
 
 instance Functor (Device s) where
     fmap f device = Device $ \s msg -> 
@@ -159,10 +162,10 @@ modifyState f = Device $ \s _ -> ((), f s, [])
 sendMessage :: GroupMessage -> Device s ()
 sendMessage msg = Device $ \s _ -> ((), s, [msg])
 
-getInputMessage :: Device s GroupMessage
+getInputMessage :: Device s IncomingGroupMessage
 getInputMessage = Device $ \s msg -> (msg, s, [])
 
-processDeviceState :: KNXConnection -> GroupMessage -> (Device Int (), Int) -> IO (Device Int (), Int)
+processDeviceState :: KNXConnection -> IncomingGroupMessage -> (Device Int (), Int) -> IO (Device Int (), Int)
 processDeviceState knx msg (device, state) = do
   let (_, newState, outputMessages) = runDevice device state msg
   performDeviceActions knx outputMessages
@@ -181,7 +184,9 @@ sampleDevice :: Device Int ()
 sampleDevice = do
     msg <- getInputMessage
     case msg of
-      GroupMessage (GroupAddress 0 1 11) dpt -> do
+      IncomingGroupMessage (GroupAddress 0 1 11) payload -> do
+        let EncodedDPT bs short = payload
+        let dpt = runGet parseDPT18_1 bs
         modifyState (+1)
-        sendMessage $ GroupMessage (GroupAddress 0 1 2) dpt
+        sendMessage $ GroupMessage (GroupAddress 0 1 12) dpt
       _ -> return ()
