@@ -19,7 +19,7 @@ data KNXAddress = KNXAddress
     { mainKA :: Int
     , middleKA :: Int
     , subKA :: Int
-    } deriving (Eq)
+    } deriving (Ord, Eq)
 
 showTriplet :: Int -> Int -> Int -> Char -> String
 showTriplet main middle sub sep = printf "%d%c%d%c%d" main sep middle sep sub
@@ -31,7 +31,7 @@ data GroupAddress = GroupAddress
     { mainGA :: Int
     , middleGA :: Int
     , subGA :: Int
-    } deriving (Eq)
+    } deriving (Ord, Eq)
 
 instance Show GroupAddress where
   show (GroupAddress main middle sub) = showTriplet main middle sub '/'

@@ -10,18 +10,24 @@ import Control.Concurrent
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
 
-runWorkerLoop :: KNXConnection -> [Device Int ()] -> MVar IncomingGroupMessage -> IO ()
+runWorkerLoop :: KNXConnection -> [Device DeviceState ()] -> MVar IncomingGroupMessage -> IO ()
 runWorkerLoop knx devices queue = do
   -- devices with their initial state
-  let devicesWithState = map (\device -> (device, 0)) devices
+  let devicesWithState = map (\device -> (device, initialDeviceState)) devices
   workerLoop knx devicesWithState queue
 
-workerLoop :: KNXConnection -> [(Device Int (), Int)] -> MVar IncomingGroupMessage -> IO ()
+workerLoop :: KNXConnection -> [(Device DeviceState (), DeviceState)] -> MVar IncomingGroupMessage -> IO ()
 workerLoop knx devices queue = do
   msg <- takeMVar queue
   putStrLn $ "Received from KNX: " ++ show msg
 
-  newDevices <- mapM (processDeviceState knx msg) devices
+  -- process the message for each device, and return the new device state
+  -- keep in mind, processDeviceState only returns new state
+  -- so we need to combine it with the device to form tuples again
+  newDevices <- mapM (\(device, state) -> do
+                  newState <- processDeviceState knx msg (device, state)
+                  return (device, newState)
+                ) devices
   workerLoop knx newDevices queue
 
 -- Define a helper function to create a thread and return an MVar

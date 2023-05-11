@@ -1,71 +1,127 @@
 module Device 
     ( Device (..)
+    , DeviceState
     , processDeviceState
     , performDeviceActions
     , sampleDevice
+    , initialDeviceState
     ) where
 
-import KNX
+import KNX hiding (groupWrite)
+import qualified KNX as KNX
 import KNXAddress
 import DPTs
+import Control.Applicative
 import Control.Monad
 import Data.Binary.Get
+import Data.Map (Map)
+import qualified Data.Map as Map
 
-data Device s a = Device { runDevice :: s -> IncomingGroupMessage -> (a, s, [GroupMessage]) }
+data DeviceState = DeviceState 
+    { stateMap :: Map GroupAddress IncomingGroupMessage
+    , waitingAddresses :: Map GroupAddress (Get DPT)
+    }
+
+instance Show DeviceState where
+    show state = "DeviceState { stateMap = " ++ show (stateMap state) ++ ", waitingAddresses = " ++ show (showKeys $ waitingAddresses state) ++ " }"
+        where
+            showKeys = map (\(k, _) -> k) . Map.toList
+
+newtype Device s a = Device { runDevice :: DeviceState -> (a, DeviceState, [GroupMessage]) }
 
 instance Functor (Device s) where
-    fmap f device = Device $ \s msg -> 
-        let (a, s', msgs) = runDevice device s msg
+    fmap f device = Device $ \s -> 
+        let (a, s', msgs) = runDevice device s
         in (f a, s', msgs)
 
 instance Applicative (Device s) where
-    pure a = Device $ \s _ -> (a, s, [])
-    deviceF <*> deviceA = Device $ \s msg ->
-        let (f, s', msgsF) = runDevice deviceF s msg
-            (a, s'', msgsA) = runDevice deviceA s' msg
-        in (f a, s'', msgsF ++ msgsA)
+    pure a = Device $ \s -> (a, s, [])
+
+    deviceF <*> deviceA = Device $ \s ->
+        let (f, s'@DeviceState{waitingAddresses=waitF, stateMap=stateF}, msgsF) = runDevice deviceF s
+            (a, s''@DeviceState{waitingAddresses=waitA, stateMap=stateA}, msgsA) = runDevice deviceA s'
+        in (f a, s''{waitingAddresses = Map.union waitF waitA, stateMap = Map.union stateF $ Map.union stateA $ stateMap s}, msgsF ++ msgsA)
 
 instance Monad (Device s) where
-    device >>= f = Device $ \s msg ->
-        let (a, s', msgs) = runDevice device s msg
-            Device g = f a
-            (a', s'', msgs') = g s' msg
-        in (a', s'', msgs ++ msgs')
+    device >>= f = Device $ \s ->
+        let (a, s'@DeviceState{waitingAddresses=wait1, stateMap=state1}, msgs) = runDevice device s
+            (b, s''@DeviceState{waitingAddresses=wait2, stateMap=state2}, msgs') = runDevice (f a) s'
+        in (b, s''{waitingAddresses = Map.union wait1 wait2, stateMap = Map.union state1 $ Map.union state2 $ stateMap s}, msgs ++ msgs')
 
-getState :: Device s s
-getState = Device $ \s _ -> (s, s, [])
+initialDeviceState :: DeviceState
+initialDeviceState = DeviceState Map.empty Map.empty
 
-modifyState :: (s -> s) -> Device s ()
-modifyState f = Device $ \s _ -> ((), f s, [])
+getState :: Device s DeviceState
+getState = Device $ \s -> (s, s, [])
 
-sendMessage :: GroupMessage -> Device s ()
-sendMessage msg = Device $ \s _ -> ((), s, [msg])
+modifyState :: (DeviceState -> DeviceState) -> Device s ()
+modifyState f = Device $ \s -> ((), f s, [])
 
-getInputMessage :: Device s IncomingGroupMessage
-getInputMessage = Device $ \s msg -> (msg, s, [])
+groupWrite :: GroupAddress -> DPT -> Device s ()
+groupWrite ga dpt = Device $ \s -> ((), s, [msg])
+    where
+        msg = GroupMessage ga dpt
 
-processDeviceState :: KNXConnection -> IncomingGroupMessage -> (Device Int (), Int) -> IO (Device Int (), Int)
+processDeviceState :: KNXConnection -> IncomingGroupMessage -> (Device DeviceState a, DeviceState) -> IO DeviceState
 processDeviceState knx msg (device, state) = do
-  let (_, newState, outputMessages) = runDevice device state msg
-  performDeviceActions knx outputMessages
-  when (newState /= state) $ putStrLn $ "New state: " ++ show newState
-  return (device, newState)
+    let (a, newState, _) = runDevice device state
+    let incomingMatch = incomingGroupAddress msg `Map.member` waitingAddresses newState
+
+    if incomingMatch
+        then do
+            let updatedState = newState { stateMap = Map.insert (incomingGroupAddress msg) msg (stateMap newState) }
+
+            putStrLn $ "Processing device state..."            
+
+            putStrLn $ "    Received message: " ++ show msg
+            putStrLn $ "    Current state: " ++ show updatedState
+
+            let (a, finalState, outputMessages) = runDevice device updatedState
+
+            putStrLn $ "    Final state: " ++ show finalState
+
+            unless (null outputMessages) $ do
+                putStrLn $ "    Performing device actions..."
+
+                performDeviceActions knx outputMessages
+                putStrLn $ "    Device actions completed."
+
+            return finalState
+        else
+            return newState
 
 performDeviceActions :: KNXConnection -> [GroupMessage] -> IO ()
 performDeviceActions knx outputMessages = do
     mapM_ (\outputMessage -> do
           putStrLn $ "Output message: " ++ show outputMessage
           -- Send the output messages to the KNX bus
-          groupWrite knx outputMessage
+          KNX.groupWrite knx outputMessage
           ) outputMessages
 
-sampleDevice :: Device Int ()
+waitFor :: GroupAddress -> (Get DPT) -> Device DeviceState (Maybe DPT)
+waitFor addr parser = Device $ \s ->
+    let stateMap' = stateMap s
+    in case Map.lookup addr stateMap' of
+        Just msg -> (parseMsg msg, s { stateMap = Map.delete addr stateMap' }, [])
+        Nothing -> (Nothing, s { waitingAddresses = Map.insert addr parser (waitingAddresses s) }, [])
+    where
+        parseMsg :: IncomingGroupMessage -> Maybe DPT
+        parseMsg msg = case runGetOrFail parser (decodeDPT $ payload msg) of
+            Left (_, _, err) -> Nothing
+            Right (_, _, dpt) -> Just dpt
+
+decodeDPT (EncodedDPT bs _) = bs
+
+sampleDevice :: Device (DeviceState) ()
 sampleDevice = do
-    msg <- getInputMessage
-    case msg of
-      IncomingGroupMessage (GroupAddress 0 1 11) payload -> do
-        let EncodedDPT bs short = payload
-        let dpt = runGet parseDPT18_1 bs
-        modifyState (+1)
-        sendMessage $ GroupMessage (GroupAddress 0 1 12) dpt
-      _ -> return ()
+    a <- waitFor (GroupAddress 0 1 8) parseDPT18_1
+    b <- waitFor (GroupAddress 0 1 11) parseDPT18_1
+
+    case (a, b) of
+        (Just (DPT18_1 (False, val_a)), Just (DPT18_1 (False, val_b))) -> do
+            c <- waitFor (GroupAddress 0 1 20) parseDPT18_1
+            case c of
+                Just (DPT18_1 (False, val_c)) -> do
+                    groupWrite (GroupAddress 0 1 21) (DPT18_1 (False, val_a + val_b + val_c))
+                _ -> return ()
+        _ -> return ()
