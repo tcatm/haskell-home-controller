@@ -1,12 +1,17 @@
 module Device 
     ( Device (..)
     , DeviceInput (..)
-    , DeviceState
+    , DeviceState (..)
     , Continuation (..)
     , processDeviceInput
     , performDeviceActions
-    , sampleDevice
     , startDevice
+    , modifyState
+    , debug
+    , groupWrite
+    , groupRead
+    , schedule
+    , getTime
     ) where
 
 import KNX hiding (groupWrite)
@@ -23,15 +28,6 @@ import Data.List
 import qualified Data.Map as Map
 import Data.Time.Clock
 import System.Console.Pretty
-
-
--- The context of the device must be fixed before invocation.
--- GroupMessages need to be part of the Input, as does the current time. This is the context.
--- GroupMessages can be events ore states. That is, they can be cached (state) or be consumed once (event).
--- Maybe there can be a function "consume" that removes the GroupMessage from the context. E.g. like pop?
--- Device needs a structure that declares the Inputs it needs
--- Scheduled Actions need to somehow fork the Device
--- new, awaited group addresses should trigger a group read
 
 data Continuation = Continuation (Device DeviceState ()) -- Used for starting a device
                   | GroupReadContinuation GroupAddress (Get DPT) (DPT -> Device DeviceState ())
@@ -211,7 +207,6 @@ performDeviceAction knx mVar state (Defer continuation) = do
     case continuation of
         ScheduledContinuation time device -> do
             putStrLn $ color Green $ "        Scheduled continuation: " ++ show time
-            -- forkIO, threadDelay, putMVar
             forkIO $ do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
@@ -225,34 +220,6 @@ performDeviceAction knx mVar state (Defer continuation) = do
             
     return (Just continuation, state)
 
-
-sampleDevice :: Device (DeviceState) ()
-sampleDevice = do
-    time <- getTime
-
-    modifyState $ \(DeviceState counter) -> DeviceState (counter + 1)
-
-    debug $ "Time: " ++ show time
-    groupRead (GroupAddress 0 1 21) parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
-        debug $ "a: " ++ show a
-        modifyState $ \(DeviceState counter) -> DeviceState (counter + 1)
-        time <- getTime
-        debug $ "Time: " ++ show time
-        schedule (addUTCTime 5 time) $ do
-            let a' = a + 1
-            modifyState $ \(DeviceState counter) -> DeviceState (counter + 1)
-            debug $ "a': " ++ show a'
-            groupWrite (GroupAddress 0 1 11) (DPT18_1 (False, a'))
-
-        sampleDevice
-
-    -- case (a, b) of
-    --     (Just (DPT18_1 (False, val_a)), Just (DPT18_1 (False, val_b))) -> 
-    --         schedule (addUTCTime 1 time) $ do
-    --             debug $ "a + b: " ++ show (val_a + val_b)        
-    --             groupWrite (GroupAddress 0 1 21) (DPT18_1 (False, val_a + val_b))
-    --     _ -> return ()
-
 -- Scene multiplexer
 -- sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> Device DeviceState ()
 -- sceneMultiplexer inputAddr offset outputAddr = do
@@ -262,13 +229,3 @@ sampleDevice = do
 --         Just (DPT18_1 (False, val_a)) -> do
 --             groupWrite outputAddr (DPT18_1 (False, (val_a `mod` 4) + offset))
 --         _ -> return ()
-
--- Typische Anwendungsfälle für Devices
--- - 1:1 Verbindung von Eingang zu Ausgang, z.B. Hue-Lampe an KNX-Schalter/Gruppe
---       (Schalten, Dimmen, Helligkeitwert, Status Schalten, Status Helligkeitswert, Szene)
--- - 1:1 Multiplexer für Szenen (DALI)
--- - n:1 Mittelwertsbildung
--- - n:n Statusermittlung
--- - Treppenhauslicht (Timer, Status Schalten + Schalten)
--- - Jalousie Simulator (braucht Timer)
--- - Homekit Anbindung
