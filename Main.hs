@@ -6,29 +6,30 @@ import Device
 import Console
 import TimeSender
 import Control.Concurrent
+import Data.Time.Clock
 
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
 
-runWorkerLoop :: KNXConnection -> [Device DeviceState ()] -> MVar IncomingGroupMessage -> IO ()
-runWorkerLoop knx devices queue = do
-  -- devices with their initial state
-  let devicesWithState = map (\device -> (device, initialDeviceState)) devices
-  workerLoop knx devicesWithState queue
+knxCallback :: MVar DeviceInput -> KNXCallback
+knxCallback mvar = KNXCallback f
+  where
+    f msg = putMVar mvar (KNXGroupMessage msg)
 
-workerLoop :: KNXConnection -> [(Device DeviceState (), DeviceState)] -> MVar IncomingGroupMessage -> IO ()
-workerLoop knx devices queue = do
-  msg <- takeMVar queue
-  putStrLn $ "Received from KNX: " ++ show msg
+runWorkerLoop :: KNXConnection -> [Device DeviceState ()] -> MVar DeviceInput -> IO ()
+runWorkerLoop knx devices mVar = do
+  continuationsWithState <- mapM (\device -> startDevice knx mVar device) devices
+  workerLoop knx continuationsWithState mVar
 
-  -- process the message for each device, and return the new device state
-  -- keep in mind, processDeviceState only returns new state
-  -- so we need to combine it with the device to form tuples again
-  newDevices <- mapM (\(device, state) -> do
-                  newState <- processDeviceState knx msg (device, state)
-                  return (device, newState)
-                ) devices
-  workerLoop knx newDevices queue
+workerLoop :: KNXConnection -> [([Continuation], DeviceState)] -> MVar DeviceInput -> IO ()
+workerLoop knx continuationsWithState mVar = do
+  msg <- takeMVar mVar
+  putStrLn $ "Received DeviceInput " ++ show msg
+  
+  -- apply msg to all devices
+  continuationsWithState' <- mapM (\(continuations, state) -> processDeviceInput knx mVar msg (continuations, state)) continuationsWithState
+
+  workerLoop knx continuationsWithState' mVar
 
 -- Define a helper function to create a thread and return an MVar
 forkIOWithSync :: IO () -> IO (MVar ())
@@ -58,7 +59,7 @@ main = do
 
   let devices = [sampleDevice]
 
-  let actions = [ runKnxLoop knx knxQueue
+  let actions = [ runKnxLoop knx (knxCallback knxQueue)
                 , timeSender timeSenderConfig knx
                 , stdinLoop knx
                 , runWorkerLoop knx devices $ knxQueue
