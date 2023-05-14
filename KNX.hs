@@ -6,6 +6,7 @@ module KNX
     , KNXConnection (..)
     , GroupMessage (..)
     , IncomingGroupMessage (..)
+    , KNXCallback (..)
     ) where
 
 import Telegram
@@ -27,6 +28,8 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 
 eibOpenGroupcon = 0x26
+
+newtype KNXCallback = KNXCallback (IncomingGroupMessage -> IO ())
 
 data KNXConnection = KNXConnection
     { host :: HostName
@@ -55,24 +58,24 @@ createTCPConnection host port = do
     connect sock (addrAddress serverAddr)
     return sock
 
-runKnxLoop :: KNXConnection -> MVar IncomingGroupMessage -> IO ()
-runKnxLoop knx mVar = do
+runKnxLoop :: KNXConnection -> KNXCallback -> IO ()
+runKnxLoop knx cb = do
     putStrLn "Starting KNX loop"
-    evalStateT (loop knx mVar) LBS.empty
+    evalStateT (loop knx cb) LBS.empty
     where
-        loop :: KNXConnection -> MVar IncomingGroupMessage -> StateT LBS.ByteString IO ()
-        loop knx mVar = do
+        loop :: KNXConnection -> KNXCallback -> StateT LBS.ByteString IO ()
+        loop knx cb = do
             input <- liftIO $ LBS.fromStrict <$> recv (sock knx) 1024
             if LBS.null input
                 then do
                     liftIO $ putStrLn "Connection closed by the server"
                     return ()
                 else do
-                    processInput input mVar
-                    loop knx mVar
+                    processInput input cb
+                    loop knx cb
 
-processInput :: LBS.ByteString -> MVar IncomingGroupMessage -> StateT LBS.ByteString IO ()
-processInput input mVar = do
+processInput :: LBS.ByteString -> KNXCallback -> StateT LBS.ByteString IO ()
+processInput input cb = do
     buffer <- get
 
     let buffer' = LBS.append buffer input
@@ -85,7 +88,7 @@ processInput input mVar = do
                 let (telegramBytes, rest) = LBS.splitAt msgLength msg
                 case parseMessage telegramBytes of
                     Left err -> putStrLn $ "Error parsing message: " ++ err
-                    Right groupMessage -> putMVar mVar groupMessage
+                    Right msg -> let KNXCallback cb' = cb in cb' msg
                 return rest
             else return buffer'
     put newBuffer

@@ -37,7 +37,10 @@ data DPT = DPT1 Bool -- short
          | DPT18_1 (Bool, Int)
             deriving (Eq, Show)
 
-data EncodedDPT = EncodedDPT LBS.ByteString Bool deriving (Show)
+data EncodedDPT = EncodedDPT
+    { encodedDPT :: LBS.ByteString
+    , encodedDPTIsShort :: Bool
+    } deriving (Show)
 
 encodeDPT :: DPT -> EncodedDPT
 encodeDPT dpt =
