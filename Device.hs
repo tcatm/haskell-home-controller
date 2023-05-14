@@ -109,59 +109,34 @@ getTime :: Device s UTCTime
 getTime = Device $ \(time, s) -> (time, s, [])
 
 performContinuationWithInput :: KNXConnection -> MVar DeviceInput -> DeviceState -> Continuation -> DeviceInput -> IO ([Continuation], DeviceState)
-performContinuationWithInput knx mVar state (GroupReadContinuation ga parser cont) (KNXGroupMessage msg) = do
+performContinuationWithInput knx mVar state c@(GroupReadContinuation ga parser cont) (KNXGroupMessage msg) = do
     time <- getCurrentTime
-    putStrLn $ color Green $ "Performing GroupReadContinuation..."
-    putStrLn $ color Green $ "    GroupAddress: " ++ show ga
+    putStrLn $ color Green $ "Performing " ++ show c
     putStrLn $ color Green $ "    Message: " ++ show msg
 
     let dpt = runGet parser (encodedDPT $ payload msg)
     putStrLn $ color Green $ "    DPT: " ++ show dpt
 
     let (a, s, actions) = runDevice (cont dpt) (time, state)
-    putStrLn $ color Green $ "    Actions: " ++ show actions
 
-    (continuations, newState) <- performDeviceActions knx mVar s actions
-
-    putStrLn $ color Green $ "    Final state: " ++ show newState
-    putStrLn $ color Green $ "    Continuations: " ++ show continuations
-    putStrLn $ color Green $ "    GroupReadContinuation completed."
-
-    return (continuations, newState)
+    performDeviceActions knx mVar s actions
 
 performContinuation :: KNXConnection -> MVar DeviceInput -> DeviceState -> Continuation -> IO ([Continuation], DeviceState)
-performContinuation knx mVar state (Continuation device) = do
+performContinuation knx mVar state c@(Continuation device) = do
     time <- getCurrentTime
-    putStrLn $ color Green $ "Performing Continuation..."
-    putStrLn $ color Green $ "    Device: " ++ show device
+    putStrLn $ color Green $ "Performing " ++ show c
 
     let (a, s, actions) = runDevice device (time, state)
-    putStrLn $ color Green $ "    Actions: " ++ show actions
 
-    (continuations, newState) <- performDeviceActions knx mVar s actions
+    performDeviceActions knx mVar s actions
 
-    putStrLn $ color Green $ "    Final state: " ++ show newState
-    putStrLn $ color Green $ "    Continuations: " ++ show continuations
-    putStrLn $ color Green $ "    Continuation completed."
-
-    return (continuations, newState)
-
-performContinuation knx mVar state (ScheduledContinuation _ device) = do
+performContinuation knx mVar state c@(ScheduledContinuation _ device) = do
     time <- getCurrentTime
-    putStrLn $ color Green $ "Performing ScheduledContinuation..."
-    putStrLn $ color Green $ "    Time: " ++ show time
-    putStrLn $ color Green $ "    Device: " ++ show device
+    putStrLn $ color Green $ "Performing " ++ show c
 
     let (a, s, actions) = runDevice device (time, state)
-    putStrLn $ color Green $ "    Actions: " ++ show actions
 
-    (continuations, newState) <- performDeviceActions knx mVar s actions
-
-    putStrLn $ color Green $ "    Final state: " ++ show newState
-    putStrLn $ color Green $ "    Continuations: " ++ show continuations
-    putStrLn $ color Green $ "    ScheduledContinuation completed."
-
-    return (continuations, newState)
+    performDeviceActions knx mVar s actions
     
 -- | The 'startDevice' function starts a device. It does not process any inputs and creates the initial state.
 startDevice :: KNXConnection -> MVar DeviceInput -> Device DeviceState () -> IO ([Continuation], DeviceState)
@@ -211,8 +186,15 @@ performDeviceActions knx mVar state actions = do
             return $ case maybeDevice of
                 Just device -> (device:devices, state')
                 Nothing -> (devices, state')
-    (devices, state') <- foldM f ([], state) actions
-    return (devices, state')
+
+    putStrLn $ color Green $ "    Actions: " ++ show actions
+
+    (continuations, state') <- foldM f ([], state) actions
+
+    putStrLn $ color Green $ "    Final state: " ++ show state'
+    putStrLn $ color Green $ "    Continuations: " ++ show continuations
+
+    return (continuations, state')
 
 performDeviceAction :: KNXConnection -> MVar DeviceInput -> DeviceState -> Action -> IO (Maybe Continuation, DeviceState)
 performDeviceAction knx mVar state (Log msg) = do
