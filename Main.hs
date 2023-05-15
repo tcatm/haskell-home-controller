@@ -4,6 +4,7 @@ import KNXAddress
 import KNX hiding (groupWrite)
 import DPTs
 import Device
+import DeviceRunner
 import Console
 import TimeSender
 import Control.Concurrent
@@ -16,21 +17,6 @@ knxCallback :: MVar DeviceInput -> KNXCallback
 knxCallback mvar = KNXCallback f
   where
     f msg = putMVar mvar (KNXGroupMessage msg)
-
-runWorkerLoop :: KNXConnection -> [Device DeviceState ()] -> MVar DeviceInput -> IO ()
-runWorkerLoop knx devices mVar = do
-  continuationsWithState <- mapM (\device -> startDevice knx mVar device) devices
-  workerLoop knx continuationsWithState mVar
-
-workerLoop :: KNXConnection -> [([Continuation], DeviceState)] -> MVar DeviceInput -> IO ()
-workerLoop knx continuationsWithState mVar = do
-  msg <- takeMVar mVar
-  putStrLn $ "Received DeviceInput " ++ show msg
-  
-  -- apply msg to all devices
-  continuationsWithState' <- mapM (\(continuations, state) -> processDeviceInput knx mVar msg (continuations, state)) continuationsWithState
-
-  workerLoop knx continuationsWithState' mVar
 
 -- Define a helper function to create a thread and return an MVar
 forkIOWithSync :: IO () -> IO (MVar ())
@@ -56,14 +42,14 @@ main = do
     intervalSeconds = 10
   }
 
-  knxQueue <- newEmptyMVar
+  deviceInput <- newEmptyMVar
 
   let devices = [sampleDevice]
 
-  let actions = [ runKNX knx $ runKnxLoop (knxCallback knxQueue)
+  let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
                 , timeSender timeSenderConfig knx
                 , stdinLoop knx
-                , runWorkerLoop knx devices $ knxQueue
+                , runDevicesLoop knx devices $ deviceInput
                 ]
 
   waitAllThreads actions
