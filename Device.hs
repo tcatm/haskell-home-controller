@@ -1,9 +1,9 @@
 module Device 
     ( DeviceM (..)
+    , Device (..)
     , Continuation (..)
     , Action (..)
     , DeviceState (..)
-    , initialDeviceState
     , modifyState
     , debug
     , groupWrite
@@ -18,6 +18,11 @@ import DPTs
 import Data.Binary.Get
 import Data.Time.Clock
 import Data.Time.LocalTime
+
+data Device = Device { deviceName :: String
+                     , initialDeviceState :: DeviceState
+                     , entryPoint :: DeviceM DeviceState ()
+                     }
 
 data Continuation = Continuation (DeviceM DeviceState ()) -- Used for starting a device
                   | GroupReadContinuation GroupAddress (Get DPT) (DPT -> DeviceM DeviceState ())
@@ -64,11 +69,6 @@ instance Monad (DeviceM s) where
 data DeviceState = DeviceState 
     { 
     } deriving (Show)
-
-initialDeviceState :: DeviceState
-initialDeviceState = DeviceState
-    {
-    }
 
 modifyState :: (DeviceState -> DeviceState) -> DeviceM s ()
 modifyState f = DeviceM $ \(time, s) -> ((), f s, [])
