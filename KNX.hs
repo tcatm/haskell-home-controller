@@ -1,3 +1,6 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module KNX 
     ( connectKnx
     , disconnectKnx
@@ -7,6 +10,8 @@ module KNX
     , GroupMessage (..)
     , IncomingGroupMessage (..)
     , KNXCallback (..)
+    , KNXM (..)
+    , runKNX
     ) where
 
 import Telegram
@@ -24,12 +29,19 @@ import Text.Printf (printf)
 import Control.Monad
 import Control.Concurrent.MVar
 import Control.Monad.Trans.State
+import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 
 eibOpenGroupcon = 0x26
 
 newtype KNXCallback = KNXCallback (IncomingGroupMessage -> IO ())
+
+newtype KNXM a = KNXM { runKNXM :: ReaderT KNXConnection IO a }
+  deriving newtype (Functor, Applicative, Monad, MonadIO)
+
+runKNX :: KNXConnection -> KNXM a -> IO a
+runKNX knx = flip runReaderT knx . runKNXM
 
 data KNXConnection = KNXConnection
     { host :: HostName
@@ -58,23 +70,24 @@ createTCPConnection host port = do
     connect sock (addrAddress serverAddr)
     return sock
 
-runKnxLoop :: KNXConnection -> KNXCallback -> IO ()
-runKnxLoop knx cb = do
-    putStrLn "Starting KNX loop"
-    evalStateT (loop knx cb) LBS.empty
+runKnxLoop :: KNXCallback -> KNXM ()
+runKnxLoop cb = do
+    liftIO $ putStrLn "Starting KNX loop"
+    evalStateT (loop cb) LBS.empty
     where
-        loop :: KNXConnection -> KNXCallback -> StateT LBS.ByteString IO ()
-        loop knx cb = do
-            input <- liftIO $ LBS.fromStrict <$> recv (sock knx) 1024
+        loop :: KNXCallback -> StateT LBS.ByteString KNXM ()
+        loop cb = do
+            knx <- lift $ KNXM ask
+            input <- liftIO $ LBS.fromStrict <$> recv (sock knx) 1024  -- liftIO should be used here
             if LBS.null input
                 then do
                     liftIO $ putStrLn "Connection closed by the server"
                     return ()
                 else do
                     processInput input cb
-                    loop knx cb
+                    loop cb
 
-processInput :: LBS.ByteString -> KNXCallback -> StateT LBS.ByteString IO ()
+processInput :: LBS.ByteString -> KNXCallback -> StateT LBS.ByteString KNXM ()
 processInput input cb = do
     buffer <- get
 
@@ -129,21 +142,23 @@ connectKnx host port = do
     _ <- send sock (LBS.toStrict message)
     return KNXConnection { host = host, port = port, sock = sock }
 
-disconnectKnx :: KNXConnection -> IO ()
-disconnectKnx knxConnection = do
-    close (sock knxConnection)
+disconnectKnx :: KNXM ()
+disconnectKnx = KNXM $ do
+    knx <- ask
+    liftIO $ close (sock knx)
     return ()
 
-sendTelegram :: KNXConnection -> Telegram -> IO ()
-sendTelegram knxConnection telegram = do
+sendTelegram :: Telegram -> KNXM ()
+sendTelegram telegram = KNXM $ do
+    knx <- ask
     let msg = composeMessage $ B.encode telegram
     -- putStrLn $ "Sending: " ++ hexWithSpaces msg
-    _ <- send (sock knxConnection) (LBS.toStrict msg)
+    _ <- liftIO $ send (sock knx) (LBS.toStrict msg)
     return ()
 
-groupWrite :: KNXConnection -> GroupMessage -> IO ()
-groupWrite knxConnection (GroupMessage groupAddress dpt) = do
-    putStrLn $ "Writing " ++ show dpt ++ " to " ++ show groupAddress
+groupWrite :: GroupMessage -> KNXM ()
+groupWrite (GroupMessage groupAddress dpt) = do
+    liftIO $ putStrLn $ "Writing " ++ show dpt ++ " to " ++ show groupAddress
     let telegram = Telegram { messageCode = 39
                             , srcField = Nothing
                             , dstField = groupAddress
@@ -152,5 +167,5 @@ groupWrite knxConnection (GroupMessage groupAddress dpt) = do
                                           , APDU.payload = encodeDPT dpt
                                           }
                             }
-    sendTelegram knxConnection telegram
+    sendTelegram telegram
     return ()

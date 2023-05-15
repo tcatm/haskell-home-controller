@@ -60,7 +60,7 @@ main = do
 
   let devices = [sampleDevice]
 
-  let actions = [ runKnxLoop knx (knxCallback knxQueue)
+  let actions = [ runKNX knx $ runKnxLoop (knxCallback knxQueue)
                 , timeSender timeSenderConfig knx
                 , stdinLoop knx
                 , runWorkerLoop knx devices $ knxQueue
@@ -68,7 +68,7 @@ main = do
 
   waitAllThreads actions
 
-  disconnectKnx knx
+  runKNX knx $ disconnectKnx
   putStrLn "Closed connection."
 
 
