@@ -18,8 +18,12 @@ data TimeSenderConfig = TimeSenderConfig
   , intervalSeconds :: NominalDiffTime
   } deriving (Show)
 
-timeSender :: TimeSenderConfig -> DeviceM (DeviceState) ()
-timeSender conf = loop
+
+timeSender :: TimeSenderConfig -> Device
+timeSender conf = Device "TimeSender" (DeviceState) (timeSenderF conf)
+
+timeSenderF :: TimeSenderConfig -> DeviceM (DeviceState) ()
+timeSenderF conf = loop
   where
     loop = do
       debug "Sending time"

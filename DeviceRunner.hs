@@ -23,7 +23,7 @@ import System.Console.Pretty
 
 data DeviceInput = KNXGroupMessage IncomingGroupMessage | TimerEvent UTCTime deriving (Show)
 
-runDevicesLoop :: KNXConnection -> [DeviceM DeviceState ()] -> MVar DeviceInput -> IO ()
+runDevicesLoop :: KNXConnection -> [Device] -> MVar DeviceInput -> IO ()
 runDevicesLoop knx devices deviceInput = do
   continuationsWithState <- mapM (\device -> startDevice knx deviceInput device) devices
   deviceLoop knx continuationsWithState deviceInput
@@ -69,9 +69,9 @@ performContinuation knx deviceInput state c@(ScheduledContinuation _ device) = d
     performDeviceActions knx deviceInput s actions
     
 -- | The 'startDevice' function starts a device. It does not process any inputs and creates the initial state.
-startDevice :: KNXConnection -> MVar DeviceInput -> DeviceM DeviceState () -> IO ([Continuation], DeviceState)
+startDevice :: KNXConnection -> MVar DeviceInput -> Device -> IO ([Continuation], DeviceState)
 startDevice knx deviceInput device = do
-    performContinuation knx deviceInput initialDeviceState (Continuation device)
+    performContinuation knx deviceInput (initialDeviceState device) (Continuation $ entryPoint device)
 
 processDeviceInput :: KNXConnection -> MVar DeviceInput -> DeviceInput -> ([Continuation], DeviceState) -> IO ([Continuation], DeviceState)
 processDeviceInput knx deviceInput (KNXGroupMessage msg) (continuations, state) = do

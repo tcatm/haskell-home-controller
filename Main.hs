@@ -58,24 +58,27 @@ main = do
   runKNX knx $ disconnectKnx
   putStrLn "Closed connection."
 
+sampleDevice = Device "Sample Device" (DeviceState) (sampleDeviceF)
 
-sampleDevice :: DeviceM (DeviceState) ()
-sampleDevice = do
-    time <- getTime
-    debug $ "Time: " ++ show time
-    groupRead (GroupAddress 0 1 21) parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
-        debug $ "a: " ++ show a
-        time <- getTime
-        debug $ "Time: " ++ show time
-        scheduleIn 5 $ do
-            debug $ "a: " ++ show a
-            groupWrite (GroupAddress 0 1 11) (DPT18_1 (False, a))
+sampleDeviceF :: DeviceM DeviceState ()
+sampleDeviceF = do
+  time <- getTime
+  debug $ "Time: " ++ show time
+  groupRead (GroupAddress 0 1 21) parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
+      debug $ "a: " ++ show a
+      time <- getTime
+      debug $ "Time: " ++ show time
+      scheduleIn 5 $ do
+          debug $ "a: " ++ show a
+          groupWrite (GroupAddress 0 1 11) (DPT18_1 (False, a))
 
-        sampleDevice
+      sampleDeviceF
 
--- Scene multiplexer
-sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> DeviceM DeviceState ()
-sceneMultiplexer inputAddr offset outputAddr = do
+sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> Device
+sceneMultiplexer inputGA offset ouputGA = Device "Scene Multiplexer" (DeviceState) (sceneMultiplexerF inputGA offset ouputGA)
+
+sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM DeviceState ()
+sceneMultiplexerF inputAddr offset outputAddr = do
     groupRead inputAddr parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
         groupWrite outputAddr (DPT18_1 (False, a + offset))
-        sceneMultiplexer inputAddr offset outputAddr
+        sceneMultiplexerF inputAddr offset outputAddr
