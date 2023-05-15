@@ -199,7 +199,7 @@ performDeviceAction knx mVar state (Log msg) = do
 
 performDeviceAction knx mVar state (GroupWrite ga dpt) = do
     putStrLn $ color Green $ "    Writing " ++ show dpt ++ " to " ++ show ga
-    KNX.groupWrite knx $ GroupMessage ga dpt
+    runKNX knx (KNX.groupWrite $ GroupMessage ga dpt)
     return (Nothing, state)
 
 performDeviceAction knx mVar state (Defer continuation) = do

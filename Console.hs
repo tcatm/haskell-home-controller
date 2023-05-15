@@ -20,7 +20,7 @@ stdinLoop knx =
     Just (groupAddress, dpt) -> do
       -- Do something with the parsed values
       putStrLn $ "Parsed: " ++ show groupAddress ++ " " ++ show dpt
-      groupWrite knx $ GroupMessage groupAddress dpt
+      runKNX knx $ groupWrite $ GroupMessage groupAddress dpt
       return ()
     Nothing -> putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 
