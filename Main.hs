@@ -9,6 +9,7 @@ import Console
 import TimeSender
 import Control.Concurrent
 import Data.Time.Clock
+import qualified Data.Map as Map
 
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
@@ -44,8 +45,8 @@ main = do
 
   deviceInput <- newEmptyMVar
 
-  let devices = [ sampleDevice
-                , timeSender timeSenderConfig
+  let devices = [ SomeDevice $ sampleDevice
+                , SomeDevice $ timeSender timeSenderConfig
                 ]
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
@@ -58,26 +59,44 @@ main = do
   runKNX knx $ disconnectKnx
   putStrLn "Closed connection."
 
-sampleDevice = Device "Sample Device" (DeviceState) [Continuation sampleDeviceF]
+-- | This device reads two group addresses and prints their sum after both have been read.
+-- | When a new value is read from either group address, the sum is recalculated.
+sampleDevice :: Device (Map.Map GroupAddress Int)
+sampleDevice = Device "Sample Device" Map.empty [Continuation sampleDeviceF]
 
-sampleDeviceF :: DeviceM DeviceState ()
+sampleDeviceF :: DeviceM (Map.Map GroupAddress Int) ()
 sampleDeviceF = do
   time <- getTime
   debug $ "Time: " ++ show time
-  groupRead (GroupAddress 0 1 21) parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
-      debug $ "a: " ++ show a
-      time <- getTime
-      debug $ "Time: " ++ show time
-      scheduleIn 5 $ do
-          debug $ "a: " ++ show a
-          groupWrite (GroupAddress 0 1 11) (DPT18_1 (False, a))
+  readAndTry groupAddressA
+  readAndTry groupAddressB
+  
+  where
+    groupAddressA = GroupAddress 0 0 1
+    groupAddressB = GroupAddress 0 0 2
 
-      sampleDeviceF
+    readAndTry ga = reader ga tryBoth
 
-sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> Device
-sceneMultiplexer inputGA offset ouputGA = Device "Scene Multiplexer" (DeviceState) [Continuation (sceneMultiplexerF inputGA offset ouputGA)]
+    reader ga f = do
+      groupRead ga parseDPT6 $ \(DPT6 a) -> do
+        debug $ "Read " ++ show a ++ " from " ++ show ga
+        modifyState $ Map.insert ga $ fromIntegral a
+        f
+        reader ga f
 
-sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM DeviceState ()
+    tryBoth = do
+      state <- getState
+      let a = Map.lookup groupAddressA state
+      let b = Map.lookup groupAddressB state
+      case (a, b) of
+        (Just a', Just b') -> 
+          let sum = a' + b'
+          in debug $ "a + b = " ++ show sum
+        _ -> return ()
+    
+sceneMultiplexer inputGA offset ouputGA = Device "Scene Multiplexer" () [Continuation (sceneMultiplexerF inputGA offset ouputGA)]
+
+sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM () ()
 sceneMultiplexerF inputAddr offset outputAddr = do
     groupRead inputAddr parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
         groupWrite outputAddr (DPT18_1 (False, a + offset))

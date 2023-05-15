@@ -19,10 +19,10 @@ data TimeSenderConfig = TimeSenderConfig
   } deriving (Show)
 
 
-timeSender :: TimeSenderConfig -> Device
-timeSender conf = Device "TimeSender" (DeviceState) [Continuation (timeSenderF conf)]
+timeSender :: TimeSenderConfig -> Device ()
+timeSender conf = Device "TimeSender" () [Continuation (timeSenderF conf)]
 
-timeSenderF :: TimeSenderConfig -> DeviceM (DeviceState) ()
+timeSenderF :: TimeSenderConfig -> DeviceM () ()
 timeSenderF conf = loop
   where
     loop = do

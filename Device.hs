@@ -1,9 +1,13 @@
+{-# LANGUAGE ExistentialQuantification #-}
+
 module Device 
     ( DeviceM (..)
     , Device (..)
+    , SomeDevice (..)
     , Continuation (..)
     , Action (..)
-    , DeviceState (..)
+    , getState
+    , setState
     , modifyState
     , debug
     , groupWrite
@@ -19,30 +23,32 @@ import Data.Binary.Get
 import Data.Time.Clock
 import Data.Time.LocalTime
 
-data Device = Device { deviceName :: String
-                     , deviceState :: DeviceState
-                     , deviceContinuations :: [Continuation]
-                     }
+data SomeDevice = forall s. Show s => SomeDevice (Device s)
 
-data Continuation = Continuation (DeviceM DeviceState ()) -- Used for starting a device
-                  | GroupReadContinuation GroupAddress (Get DPT) (DPT -> DeviceM DeviceState ())
-                  | ScheduledContinuation UTCTime (DeviceM DeviceState ())
+data Device s = Device  { deviceName :: String
+                        , deviceState :: s
+                        , deviceContinuations :: [Continuation s]
+                        }
 
-instance Show Continuation where
+data Continuation s = Continuation (DeviceM s ()) -- Used for starting a device
+                    | GroupReadContinuation GroupAddress (Get DPT) (DPT -> DeviceM s ())
+                    | ScheduledContinuation UTCTime (DeviceM s ())
+
+instance Show (Continuation s) where
     show (Continuation _) = "Continuation"
     show (GroupReadContinuation ga _ _) = "GroupReadContinuation " ++ show ga
     show (ScheduledContinuation time _) = "ScheduledContinuation " ++ show time
 
-data Action = GroupWrite GroupAddress DPT
-            | Defer Continuation
-            | Log String
+data Action s   = GroupWrite GroupAddress DPT
+                | Defer (Continuation s)
+                | Log String
 
-instance Show Action where
+instance Show (Action s) where
     show (GroupWrite ga dpt) = "GroupWrite " ++ show ga ++ " " ++ show dpt
     show (Defer c) = "Defer " ++ show c
     show (Log msg) = "Log " ++ msg
 
-data DeviceM s a = DeviceM { runDeviceM :: (ZonedTime, DeviceState) -> (a, DeviceState, [Action]) }
+data DeviceM s a = DeviceM { runDeviceM :: (ZonedTime, s) -> (a, s, [Action s]) }
 
 instance Show (DeviceM s a) where
     show _ = "Device <function>"
@@ -66,11 +72,13 @@ instance Monad (DeviceM s) where
             (b, s'', actions') = runDeviceM (f a) (time, s')
         in (b, s'', actions ++ actions')
 
-data DeviceState = DeviceState 
-    { 
-    } deriving (Show)
+getState :: DeviceM s s
+getState = DeviceM $ \(time, s) -> (s, s, [])
 
-modifyState :: (DeviceState -> DeviceState) -> DeviceM s ()
+setState :: s -> DeviceM s ()
+setState s = DeviceM $ \(time, _) -> ((), s, [])
+
+modifyState :: (s -> s) -> DeviceM s ()
 modifyState f = DeviceM $ \(time, s) -> ((), f s, [])
 
 debug :: String -> DeviceM s ()
@@ -81,15 +89,15 @@ groupWrite ga dpt = DeviceM $ \(time, s) -> ((), s, [action])
     where
         action = GroupWrite ga dpt
 
-groupRead :: GroupAddress -> (Get DPT) -> (DPT -> DeviceM DeviceState ()) -> DeviceM DeviceState ()
+groupRead :: GroupAddress -> (Get DPT) -> (DPT -> DeviceM s ()) -> DeviceM s ()
 groupRead ga parser cont = DeviceM $ \(time, s) -> ((), s, [Defer $ GroupReadContinuation ga parser cont])
 
-scheduleAt :: UTCTime -> DeviceM DeviceState () -> DeviceM s ()
+scheduleAt :: UTCTime -> DeviceM s () -> DeviceM s ()
 scheduleAt time device = DeviceM $ \(_, s) -> ((), s, [action])
     where
         action = Defer $ ScheduledContinuation time device
 
-scheduleIn :: NominalDiffTime -> DeviceM DeviceState () -> DeviceM s ()
+scheduleIn :: NominalDiffTime -> DeviceM s () -> DeviceM s ()
 scheduleIn offset device = do
     now <- getTime
     scheduleAt (addUTCTime offset $ zonedTimeToUTC now) device
