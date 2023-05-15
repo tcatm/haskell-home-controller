@@ -20,7 +20,7 @@ data TimeSenderConfig = TimeSenderConfig
 
 
 timeSender :: TimeSenderConfig -> Device
-timeSender conf = Device "TimeSender" (DeviceState) (timeSenderF conf)
+timeSender conf = Device "TimeSender" (DeviceState) [Continuation (timeSenderF conf)]
 
 timeSenderF :: TimeSenderConfig -> DeviceM (DeviceState) ()
 timeSenderF conf = loop

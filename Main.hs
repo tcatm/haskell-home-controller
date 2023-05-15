@@ -50,7 +50,7 @@ main = do
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
                 , stdinLoop knx
-                , runDevicesLoop knx devices $ deviceInput
+                , runKNX knx $ runDevices devices deviceInput
                 ]
 
   waitAllThreads actions
@@ -58,7 +58,7 @@ main = do
   runKNX knx $ disconnectKnx
   putStrLn "Closed connection."
 
-sampleDevice = Device "Sample Device" (DeviceState) (sampleDeviceF)
+sampleDevice = Device "Sample Device" (DeviceState) [Continuation sampleDeviceF]
 
 sampleDeviceF :: DeviceM DeviceState ()
 sampleDeviceF = do
@@ -75,7 +75,7 @@ sampleDeviceF = do
       sampleDeviceF
 
 sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> Device
-sceneMultiplexer inputGA offset ouputGA = Device "Scene Multiplexer" (DeviceState) (sceneMultiplexerF inputGA offset ouputGA)
+sceneMultiplexer inputGA offset ouputGA = Device "Scene Multiplexer" (DeviceState) [Continuation (sceneMultiplexerF inputGA offset ouputGA)]
 
 sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM DeviceState ()
 sceneMultiplexerF inputAddr offset outputAddr = do
