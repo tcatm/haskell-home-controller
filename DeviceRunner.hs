@@ -1,6 +1,5 @@
 module DeviceRunner
-    ( Device (..)
-    , DeviceInput (..)
+    ( DeviceInput (..)
     , DeviceState (..)
     , Continuation (..)
     , processDeviceInput
@@ -24,7 +23,7 @@ import System.Console.Pretty
 
 data DeviceInput = KNXGroupMessage IncomingGroupMessage | TimerEvent UTCTime deriving (Show)
 
-runDevicesLoop :: KNXConnection -> [Device DeviceState ()] -> MVar DeviceInput -> IO ()
+runDevicesLoop :: KNXConnection -> [DeviceM DeviceState ()] -> MVar DeviceInput -> IO ()
 runDevicesLoop knx devices deviceInput = do
   continuationsWithState <- mapM (\device -> startDevice knx deviceInput device) devices
   deviceLoop knx continuationsWithState deviceInput
@@ -48,7 +47,7 @@ performContinuationWithInput knx deviceInput state c@(GroupReadContinuation ga p
     let dpt = runGet parser (encodedDPT $ payload msg)
     putStrLn $ color Green $ "    DPT: " ++ show dpt
 
-    let (a, s, actions) = runDevice (cont dpt) (time, state)
+    let (a, s, actions) = runDeviceM (cont dpt) (time, state)
 
     performDeviceActions knx deviceInput s actions
 
@@ -57,7 +56,7 @@ performContinuation knx deviceInput state c@(Continuation device) = do
     time <- getZonedTime
     putStrLn $ color Green $ "Performing " ++ show c
 
-    let (a, s, actions) = runDevice device (time, state)
+    let (a, s, actions) = runDeviceM device (time, state)
 
     performDeviceActions knx deviceInput s actions
 
@@ -65,12 +64,12 @@ performContinuation knx deviceInput state c@(ScheduledContinuation _ device) = d
     time <- getZonedTime
     putStrLn $ color Green $ "Performing " ++ show c
 
-    let (a, s, actions) = runDevice device (time, state)
+    let (a, s, actions) = runDeviceM device (time, state)
 
     performDeviceActions knx deviceInput s actions
     
 -- | The 'startDevice' function starts a device. It does not process any inputs and creates the initial state.
-startDevice :: KNXConnection -> MVar DeviceInput -> Device DeviceState () -> IO ([Continuation], DeviceState)
+startDevice :: KNXConnection -> MVar DeviceInput -> DeviceM DeviceState () -> IO ([Continuation], DeviceState)
 startDevice knx deviceInput device = do
     performContinuation knx deviceInput initialDeviceState (Continuation device)
 
