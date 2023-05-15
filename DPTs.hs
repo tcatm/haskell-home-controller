@@ -1,12 +1,12 @@
 module DPTs
     ( DPT (..)
     , EncodedDPT (..)
-    , parseDPT
     , encodeDPT
     , parseDPT1
     , parseDPT2
     , parseDPT3
     , parseDPT5
+    , parseDPT6
     , parseDPT18_1
     ) where
 
@@ -81,20 +81,20 @@ encodeDPT dpt =
                                 , False)
     in EncodedDPT (runPut result) bool
 
-parseDPT :: Binary a => Get a
-parseDPT = get
-
 parseDPT1 :: Get DPT
-parseDPT1 = DPT1 . (/= (0 :: Word8)) <$> parseDPT
+parseDPT1 = DPT1 . (/= (0 :: Word8)) <$> get
 
 parseDPT2 :: Get DPT
-parseDPT2 = (\v -> DPT2 ((v .&. 0x02 /= (0 :: Word8)), (v .&. 0x01 /= (0 :: Word8)))) <$> parseDPT
+parseDPT2 = (\v -> DPT2 ((v .&. 0x02 /= (0 :: Word8)), (v .&. 0x01 /= (0 :: Word8)))) <$> get
 
 parseDPT3 :: Get DPT
-parseDPT3 = (\v -> DPT3 $ fromIntegral (((v :: Word8) .&. 0x08 `shiftR` 4) .|. ((v :: Word8) .&. 0x07))) <$> parseDPT
+parseDPT3 = (\v -> DPT3 $ fromIntegral (((v :: Word8) .&. 0x08 `shiftR` 4) .|. ((v :: Word8) .&. 0x07))) <$> get
 
 parseDPT5 :: Get DPT
-parseDPT5 = DPT5 <$> parseDPT
+parseDPT5 = DPT5 <$> get
+
+parseDPT6 :: Get DPT
+parseDPT6 = DPT6 . fromIntegral <$> (get :: Get Int8)
 
 parseDPT18_1 :: Get DPT
-parseDPT18_1 = (\v -> DPT18_1 (((v :: Word8) .&. 0x80 /= 0), fromIntegral $ (v :: Word8) .&. 0x7F)) <$> parseDPT
+parseDPT18_1 = (\v -> DPT18_1 (((v :: Word8) .&. 0x80 /= 0), fromIntegral $ (v :: Word8) .&. 0x7F)) <$> get

@@ -1,6 +1,5 @@
 module DeviceRunner
     ( DeviceInput (..)
-    , DeviceState (..)
     , Continuation (..)
     , runDevices
     ) where
@@ -11,8 +10,6 @@ import DPTs
 import Device
 import Control.Monad
 import Control.Concurrent
-import Control.Concurrent.MVar
-import Control.Monad.Trans.State
 import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
@@ -26,32 +23,27 @@ data DeviceInput = StartDevice | KNXGroupMessage IncomingGroupMessage | TimerEve
 
 type DeviceRunnerT = ReaderT (MVar DeviceInput) KNXM
 
-runDevices :: [Device] -> MVar DeviceInput -> KNXM ()
+runDevices :: [SomeDevice] -> MVar DeviceInput -> KNXM ()
 runDevices devices deviceInput = 
     runReaderT (deviceRunner devices) deviceInput
 
-deviceRunner :: [Device] -> DeviceRunnerT ()
+deviceRunner :: [SomeDevice] -> DeviceRunnerT ()
 deviceRunner devices = do
-    -- First, perform all unconditional continuations
-    devices' <- mapM (processDeviceInput StartDevice) devices
-
-    -- Then, wait for input and perform continuations based on that input in a loop
-    deviceLoop devices'
-
-deviceLoop :: [Device] -> DeviceRunnerT ()
-deviceLoop devices = do
     mVar <- ask
-    msg <- liftIO $ takeMVar mVar
-    liftIO $ putStrLn $ "Received DeviceInput " ++ show msg
+    devices' <- mapDevices StartDevice devices
 
-    -- Process the input for each device
-    devices' <- mapM (processDeviceInput msg) devices
+    let loop devices'' = do
+          input <- liftIO $ takeMVar mVar
+          devices''' <- mapDevices input devices''
+          loop devices'''
 
-    deviceLoop devices'
+    loop devices'        
 
+mapDevices :: DeviceInput -> [SomeDevice] -> DeviceRunnerT [SomeDevice]
+mapDevices input = mapM (\(SomeDevice d) -> SomeDevice <$> processDeviceInput input d)
 
-performAction :: DeviceState -> Continuation -> DeviceM DeviceState () -> DeviceRunnerT ([Continuation], DeviceState)
-performAction state c device =  do
+performAction :: (Show s) => s -> Continuation s -> DeviceM s () -> DeviceRunnerT ([Continuation s], s)
+performAction state c device = do
     time <- liftIO $ getZonedTime
     liftIO $ putStrLn $ color Green $ "Performing " ++ show c
 
@@ -66,21 +58,21 @@ performAction state c device =  do
 
     return (continuations, state')
 
-performContinuationWithInput :: DeviceInput -> DeviceState  -> Continuation -> DeviceRunnerT ([Continuation], DeviceState)
+performContinuationWithInput :: (Show s) => DeviceInput -> s  -> Continuation s -> DeviceRunnerT ([Continuation s], s)
 performContinuationWithInput (KNXGroupMessage msg) state c@(GroupReadContinuation ga parser cont) = do
     let dpt = runGet parser (encodedDPT $ payload msg)
     liftIO $ putStrLn $ color Green $ "    DPT: " ++ show dpt
 
     performAction state c (cont dpt)
 
-performContinuation :: DeviceState -> Continuation -> DeviceRunnerT ([Continuation], DeviceState)
+performContinuation :: (Show s) => s -> Continuation s -> DeviceRunnerT ([Continuation s], s)
 performContinuation state c@(Continuation device) =
     performAction state c device
 
 performContinuation state c@(ScheduledContinuation _ device) =
     performAction state c device
 
-processDeviceInput :: DeviceInput -> Device -> DeviceRunnerT Device
+processDeviceInput :: (Show s) => DeviceInput -> Device s -> DeviceRunnerT (Device s)
 processDeviceInput input device = do
     let continuations = deviceContinuations device
     let state = deviceState device
@@ -117,7 +109,7 @@ processDeviceInput input device = do
 
     return device { deviceContinuations = continuations' ++ otherContinuations, deviceState = state' }
 
-performDeviceActions :: DeviceState -> [Action] -> DeviceRunnerT ([Continuation], DeviceState)
+performDeviceActions :: (Show s) => s -> [Action s] -> DeviceRunnerT ([Continuation s], s)
 performDeviceActions state actions = do
     let f (accumulatedContinuations, state) action = do
             (maybeContinuation, state') <- performDeviceAction state action
@@ -129,7 +121,7 @@ performDeviceActions state actions = do
 
     return (continuations, state')
 
-performDeviceAction :: DeviceState -> Action -> DeviceRunnerT (Maybe Continuation, DeviceState)
+performDeviceAction :: s -> Action s -> DeviceRunnerT (Maybe (Continuation s), s)
 performDeviceAction state (Log msg) = do
     liftIO $ putStrLn $ color Yellow $ msg
     return (Nothing, state)
