@@ -3,38 +3,36 @@ module TimeSender
     , timeSender
     ) where
 
-import KNX
 import KNXAddress
 import DPTs
+import Device
 
 import Data.Time.Clock
 import Data.Time.LocalTime
 import Data.Time.Calendar
 import Data.Time.Calendar.WeekDate
 
-import Control.Concurrent
-import Control.Monad
-
 data TimeSenderConfig = TimeSenderConfig
   { timeGA :: GroupAddress
   , dateGA :: GroupAddress
-  , intervalSeconds :: Int
+  , intervalSeconds :: NominalDiffTime
   } deriving (Show)
 
-timeSender :: TimeSenderConfig -> KNXConnection -> IO ()
-timeSender conf knx = do
-  putStrLn "Starting time sender thread"
-  forever $ do
-    putStrLn "Sending time"
-    time <- zonedTimeToLocalTime <$> getZonedTime
-    let timeBytes = timeToBytes time
-    let dptTime = DPT10 timeBytes
-    runKNX knx $ groupWrite $ GroupMessage (timeGA conf) dptTime 
+timeSender :: TimeSenderConfig -> Device (DeviceState) ()
+timeSender conf = loop
+  where
+    loop = do
+      debug "Sending time"
+      time <- zonedTimeToLocalTime <$> getTime
+      let timeBytes = timeToBytes time
+      let dptTime = DPT10 timeBytes
+      groupWrite (timeGA conf) dptTime
 
-    let dateBytes = dateToBytes time
-    let dptDate = DPT11 dateBytes
-    runKNX knx $ groupWrite $ GroupMessage (dateGA conf) dptDate
-    threadDelay $ 1000000 * (intervalSeconds conf)
+      let dateBytes = dateToBytes time
+      let dptDate = DPT11 dateBytes
+      groupWrite (dateGA conf) dptDate
+
+      scheduleIn (intervalSeconds conf) loop
 
 timeToBytes :: LocalTime -> (Word, Word, Word, Word)
 timeToBytes time = (fromIntegral dayOfWeek, hour, minute, second)

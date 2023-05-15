@@ -44,10 +44,11 @@ main = do
 
   deviceInput <- newEmptyMVar
 
-  let devices = [sampleDevice]
+  let devices = [ sampleDevice
+                , timeSender timeSenderConfig
+                ]
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
-                , timeSender timeSenderConfig knx
                 , stdinLoop knx
                 , runDevicesLoop knx devices $ deviceInput
                 ]
@@ -70,7 +71,7 @@ sampleDevice = do
         modifyState $ \(DeviceState counter) -> DeviceState (counter + 1)
         time <- getTime
         debug $ "Time: " ++ show time
-        schedule (addUTCTime 5 time) $ do
+        scheduleIn 5 $ do
             modifyState $ \(DeviceState counter) -> DeviceState (counter + 1)
             debug $ "a: " ++ show a
             groupWrite (GroupAddress 0 1 11) (DPT18_1 (False, a))
