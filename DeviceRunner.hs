@@ -2,10 +2,7 @@ module DeviceRunner
     ( DeviceInput (..)
     , DeviceState (..)
     , Continuation (..)
-    , processDeviceInput
-    , performDeviceActions
-    , startDevice
-    , runDevicesLoop
+    , runDevices
     ) where
 
 import KNX hiding (groupWrite)
@@ -15,141 +12,151 @@ import Device
 import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.MVar
+import Control.Monad.Trans.State
+import Control.Monad.Trans.Class
+import Control.Monad.IO.Class
+import Control.Monad.Trans.Reader
 import Data.Binary.Get
 import Data.List
 import Data.Time.Clock
 import Data.Time.LocalTime
 import System.Console.Pretty
 
-data DeviceInput = KNXGroupMessage IncomingGroupMessage | TimerEvent UTCTime deriving (Show)
+data DeviceInput = StartDevice | KNXGroupMessage IncomingGroupMessage | TimerEvent UTCTime deriving (Show)
 
-runDevicesLoop :: KNXConnection -> [Device] -> MVar DeviceInput -> IO ()
-runDevicesLoop knx devices deviceInput = do
-  continuationsWithState <- mapM (\device -> startDevice knx deviceInput device) devices
-  deviceLoop knx continuationsWithState deviceInput
+type DeviceRunnerT = ReaderT (MVar DeviceInput) KNXM
 
-deviceLoop :: KNXConnection -> [([Continuation], DeviceState)] -> MVar DeviceInput -> IO ()
-deviceLoop knx continuationsWithState deviceInput = do
-  msg <- takeMVar deviceInput
-  putStrLn $ "Received DeviceInput " ++ show msg
-  
-  -- apply msg to all devices
-  continuationsWithState' <- mapM (\(continuations, state) -> processDeviceInput knx deviceInput msg (continuations, state)) continuationsWithState
+runDevices :: [Device] -> MVar DeviceInput -> KNXM ()
+runDevices devices deviceInput = 
+    runReaderT (deviceRunner devices) deviceInput
 
-  deviceLoop knx continuationsWithState' deviceInput
+deviceRunner :: [Device] -> DeviceRunnerT ()
+deviceRunner devices = do
+    -- First, perform all unconditional continuations
+    devices' <- mapM (processDeviceInput StartDevice) devices
 
-performContinuationWithInput :: KNXConnection -> MVar DeviceInput -> DeviceState -> Continuation -> DeviceInput -> IO ([Continuation], DeviceState)
-performContinuationWithInput knx deviceInput state c@(GroupReadContinuation ga parser cont) (KNXGroupMessage msg) = do
-    time <- getZonedTime
-    putStrLn $ color Green $ "Performing " ++ show c
-    putStrLn $ color Green $ "    Message: " ++ show msg
+    -- Then, wait for input and perform continuations based on that input in a loop
+    deviceLoop devices'
 
-    let dpt = runGet parser (encodedDPT $ payload msg)
-    putStrLn $ color Green $ "    DPT: " ++ show dpt
+deviceLoop :: [Device] -> DeviceRunnerT ()
+deviceLoop devices = do
+    mVar <- ask
+    msg <- liftIO $ takeMVar mVar
+    liftIO $ putStrLn $ "Received DeviceInput " ++ show msg
 
-    let (a, s, actions) = runDeviceM (cont dpt) (time, state)
+    -- Process the input for each device
+    devices' <- mapM (processDeviceInput msg) devices
 
-    performDeviceActions knx deviceInput s actions
+    deviceLoop devices'
 
-performContinuation :: KNXConnection -> MVar DeviceInput -> DeviceState -> Continuation -> IO ([Continuation], DeviceState)
-performContinuation knx deviceInput state c@(Continuation device) = do
-    time <- getZonedTime
-    putStrLn $ color Green $ "Performing " ++ show c
 
-    let (a, s, actions) = runDeviceM device (time, state)
+performAction :: DeviceState -> Continuation -> DeviceM DeviceState () -> DeviceRunnerT ([Continuation], DeviceState)
+performAction state c device =  do
+    time <- liftIO $ getZonedTime
+    liftIO $ putStrLn $ color Green $ "Performing " ++ show c
 
-    performDeviceActions knx deviceInput s actions
+    let (_, state', actions) = runDeviceM device (time, state)
 
-performContinuation knx deviceInput state c@(ScheduledContinuation _ device) = do
-    time <- getZonedTime
-    putStrLn $ color Green $ "Performing " ++ show c
+    liftIO $ putStrLn $ color Green $ "    Actions: " ++ show actions
 
-    let (a, s, actions) = runDeviceM device (time, state)
+    (continuations, state'') <- performDeviceActions state' actions
 
-    performDeviceActions knx deviceInput s actions
-    
--- | The 'startDevice' function starts a device. It does not process any inputs and creates the initial state.
-startDevice :: KNXConnection -> MVar DeviceInput -> Device -> IO ([Continuation], DeviceState)
-startDevice knx deviceInput device = do
-    performContinuation knx deviceInput (initialDeviceState device) (Continuation $ entryPoint device)
-
-processDeviceInput :: KNXConnection -> MVar DeviceInput -> DeviceInput -> ([Continuation], DeviceState) -> IO ([Continuation], DeviceState)
-processDeviceInput knx deviceInput (KNXGroupMessage msg) (continuations, state) = do
-    time <- getZonedTime
-    let groupAddress = incomingGroupAddress msg
-    -- partition continuations into those that match the incoming message and those that don't
-
-    let (a, b) = partition (\c -> case c of
-                                GroupReadContinuation ga _ _ -> ga == groupAddress
-                                _ -> False
-                            ) continuations
-
-    -- for each matching continuation, run the continuation and add the resulting continuation to the list of continuations
-    -- basically, fold them
-
-    let f (continuations, state) continuation = do
-            (continuations', state') <- performContinuationWithInput knx deviceInput state continuation (KNXGroupMessage msg)
-            return (continuations' ++ continuations, state')
-        
-    (continuations', state') <- foldM f ([], state) a
-
-    return (continuations' ++ b, state')
-
-processDeviceInput knx deviceInput (TimerEvent time) (continuations, state) = do
-    let (a, b) = partition (\c -> case c of
-                                ScheduledContinuation t _ -> t <= time
-                                _ -> False
-                            ) continuations
-
-    let f (continuations, state) continuation = do
-            (continuations', state') <- performContinuation knx deviceInput state continuation
-            return (continuations' ++ continuations, state')
-        
-    (continuations', state') <- foldM f ([], state) a
-
-    return (continuations' ++ b, state')
-
-performDeviceActions :: KNXConnection -> MVar DeviceInput -> DeviceState -> [Action] -> IO ([Continuation], DeviceState)
-performDeviceActions knx deviceInput state actions = do
-    let f (devices, state) action = do
-            (maybeDevice, state') <- performDeviceAction knx deviceInput state action
-            return $ case maybeDevice of
-                Just device -> (device:devices, state')
-                Nothing -> (devices, state')
-
-    putStrLn $ color Green $ "    Actions: " ++ show actions
-
-    (continuations, state') <- foldM f ([], state) actions
-
-    putStrLn $ color Green $ "    Final state: " ++ show state'
-    putStrLn $ color Green $ "    Continuations: " ++ show continuations
+    liftIO $ putStrLn $ color Green $ "    Final state: " ++ show state''
+    liftIO $ putStrLn $ color Green $ "    Continuations: " ++ show continuations
 
     return (continuations, state')
 
-performDeviceAction :: KNXConnection -> MVar DeviceInput -> DeviceState -> Action -> IO (Maybe Continuation, DeviceState)
-performDeviceAction knx deviceInput state (Log msg) = do
-    putStrLn $ color Yellow $ "    " ++ msg
+performContinuationWithInput :: DeviceInput -> DeviceState  -> Continuation -> DeviceRunnerT ([Continuation], DeviceState)
+performContinuationWithInput (KNXGroupMessage msg) state c@(GroupReadContinuation ga parser cont) = do
+    let dpt = runGet parser (encodedDPT $ payload msg)
+    liftIO $ putStrLn $ color Green $ "    DPT: " ++ show dpt
+
+    performAction state c (cont dpt)
+
+performContinuation :: DeviceState -> Continuation -> DeviceRunnerT ([Continuation], DeviceState)
+performContinuation state c@(Continuation device) =
+    performAction state c device
+
+performContinuation state c@(ScheduledContinuation _ device) =
+    performAction state c device
+
+processDeviceInput :: DeviceInput -> Device -> DeviceRunnerT Device
+processDeviceInput input device = do
+    let continuations = deviceContinuations device
+    let state = deviceState device
+
+    let (filterF, performF) = case input of
+            StartDevice ->
+                ((\c -> case c of
+                            Continuation _ -> True
+                            _ -> False),
+                performContinuation )
+            KNXGroupMessage msg ->
+                (let groupAddress = incomingGroupAddress msg in
+                (\c -> case c of
+                            GroupReadContinuation ga _ _ -> ga == groupAddress
+                            _ -> False),
+                performContinuationWithInput (KNXGroupMessage msg))
+            TimerEvent time ->
+                ((\c -> case c of
+                            ScheduledContinuation t _ -> t <= time
+                            _ -> False),
+                performContinuation)
+
+    let (matchingContinuations, otherContinuations) = partition filterF continuations
+
+    let f (continuations, state) continuation = do
+            (continuations', state') <- performF state continuation
+            return (continuations' ++ continuations, state')
+
+    -- If any devices are run, print a message
+    when (not $ null matchingContinuations) $
+        liftIO $ putStrLn $ color Blue $ "Processing " ++ show input ++ " for " ++ deviceName device
+
+    (continuations', state') <- foldM f ([], state) matchingContinuations
+
+    return device { deviceContinuations = continuations' ++ otherContinuations, deviceState = state' }
+
+performDeviceActions :: DeviceState -> [Action] -> DeviceRunnerT ([Continuation], DeviceState)
+performDeviceActions state actions = do
+    let f (accumulatedContinuations, state) action = do
+            (maybeContinuation, state') <- performDeviceAction state action
+            return $ case maybeContinuation of
+                Just continuation -> (continuation:accumulatedContinuations, state')
+                Nothing -> (accumulatedContinuations, state')
+
+    (continuations, state') <- foldM f ([], state) actions
+
+    return (continuations, state')
+
+performDeviceAction :: DeviceState -> Action -> DeviceRunnerT (Maybe Continuation, DeviceState)
+performDeviceAction state (Log msg) = do
+    liftIO $ putStrLn $ color Yellow $ msg
     return (Nothing, state)
 
-performDeviceAction knx deviceInput state (GroupWrite ga dpt) = do
-    putStrLn $ color Green $ "    Writing " ++ show dpt ++ " to " ++ show ga
-    runKNX knx (KNX.groupWrite $ GroupMessage ga dpt)
+performDeviceAction state (GroupWrite ga dpt) = do
+    liftIO $ putStrLn $ color Magenta $ "    GroupMessage " ++ show dpt ++ " to " ++ show ga
+    lift $ KNX.groupWrite $ GroupMessage ga dpt
     return (Nothing, state)
 
-performDeviceAction knx deviceInput state (Defer continuation) = do
-    putStrLn $ color Green $ "    Deferring continuation: " ++ show continuation
+performDeviceAction state (Defer continuation) = do
+    liftIO $ putStrLn $ color Magenta $ "    Deferring continuation: " ++ show continuation
     case continuation of
+        Continuation device -> do
+            return ()
+
+        GroupReadContinuation ga _ _ -> do
+            -- TODO: Maybe trigger a group read on KNX?
+            return ()
+
         ScheduledContinuation time device -> do
-            putStrLn $ color Green $ "        Scheduled continuation: " ++ show time
-            forkIO $ do
+            mVar <- ask
+            liftIO $ forkIO $ do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
                 threadDelay $ ceiling $ 1000000 * delay
-                putMVar deviceInput $ TimerEvent time
+                putMVar mVar $ TimerEvent time
 
             return ()
 
-        GroupReadContinuation ga parser cont -> do
-            putStrLn $ color Green $ "        GroupReadContinuation: " ++ show ga
-            
     return (Just continuation, state)

@@ -20,8 +20,8 @@ import Data.Time.Clock
 import Data.Time.LocalTime
 
 data Device = Device { deviceName :: String
-                     , initialDeviceState :: DeviceState
-                     , entryPoint :: DeviceM DeviceState ()
+                     , deviceState :: DeviceState
+                     , deviceContinuations :: [Continuation]
                      }
 
 data Continuation = Continuation (DeviceM DeviceState ()) -- Used for starting a device
