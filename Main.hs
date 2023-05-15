@@ -77,3 +77,10 @@ sampleDevice = do
             groupWrite (GroupAddress 0 1 11) (DPT18_1 (False, a))
 
         sampleDevice
+
+-- Scene multiplexer
+sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> Device DeviceState ()
+sceneMultiplexer inputAddr offset outputAddr = do
+    groupRead inputAddr parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
+        groupWrite outputAddr (DPT18_1 (False, a + offset))
+        sceneMultiplexer inputAddr offset outputAddr

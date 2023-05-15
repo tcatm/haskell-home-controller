@@ -96,14 +96,3 @@ scheduleIn offset device = do
 
 getTime :: Device s ZonedTime
 getTime = Device $ \(time, s) -> (time, s, [])
-
-
--- Scene multiplexer
--- sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> Device DeviceState ()
--- sceneMultiplexer inputAddr offset outputAddr = do
---     a <- waitFor inputAddr parseDPT18_1
-
---     case a of
---         Just (DPT18_1 (False, val_a)) -> do
---             groupWrite outputAddr (DPT18_1 (False, (val_a `mod` 4) + offset))
---         _ -> return ()
