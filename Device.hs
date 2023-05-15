@@ -1,5 +1,5 @@
 module Device 
-    ( Device (..)
+    ( DeviceM (..)
     , Continuation (..)
     , Action (..)
     , DeviceState (..)
@@ -19,9 +19,9 @@ import Data.Binary.Get
 import Data.Time.Clock
 import Data.Time.LocalTime
 
-data Continuation = Continuation (Device DeviceState ()) -- Used for starting a device
-                  | GroupReadContinuation GroupAddress (Get DPT) (DPT -> Device DeviceState ())
-                  | ScheduledContinuation UTCTime (Device DeviceState ())
+data Continuation = Continuation (DeviceM DeviceState ()) -- Used for starting a device
+                  | GroupReadContinuation GroupAddress (Get DPT) (DPT -> DeviceM DeviceState ())
+                  | ScheduledContinuation UTCTime (DeviceM DeviceState ())
 
 instance Show Continuation where
     show (Continuation _) = "Continuation"
@@ -37,62 +37,62 @@ instance Show Action where
     show (Defer c) = "Defer " ++ show c
     show (Log msg) = "Log " ++ msg
 
+data DeviceM s a = DeviceM { runDeviceM :: (ZonedTime, DeviceState) -> (a, DeviceState, [Action]) }
+
+instance Show (DeviceM s a) where
+    show _ = "Device <function>"
+
+instance Functor (DeviceM s) where
+    fmap f device = DeviceM $ \(time, s) -> 
+        let (a, s', actions) = runDeviceM device (time, s)
+        in (f a, s', actions)
+
+instance Applicative (DeviceM s) where
+    pure a = DeviceM $ \(time, s) -> (a, s, [])
+
+    deviceF <*> deviceA = DeviceM $ \(time, s) ->
+        let (f, s', actions) = runDeviceM deviceF (time, s)
+            (a, s'', actions') = runDeviceM deviceA (time, s')
+        in (f a, s'', actions ++ actions')
+
+instance Monad (DeviceM s) where
+    device >>= f = DeviceM $ \(time, s) ->
+        let (a, s', actions) = runDeviceM device (time, s)
+            (b, s'', actions') = runDeviceM (f a) (time, s')
+        in (b, s'', actions ++ actions')
+
 data DeviceState = DeviceState 
-    { counter :: Int
+    { 
     } deriving (Show)
 
 initialDeviceState :: DeviceState
 initialDeviceState = DeviceState
-    { counter = 0
+    {
     }
 
-data Device s a = Device { runDevice :: (ZonedTime, DeviceState) -> (a, DeviceState, [Action]) }
+modifyState :: (DeviceState -> DeviceState) -> DeviceM s ()
+modifyState f = DeviceM $ \(time, s) -> ((), f s, [])
 
-instance Show (Device s a) where
-    show _ = "Device <function>"
+debug :: String -> DeviceM s ()
+debug msg = DeviceM $ \(time, s) -> ((), s, [Log msg])
 
-instance Functor (Device s) where
-    fmap f device = Device $ \(time, s) -> 
-        let (a, s', actions) = runDevice device (time, s)
-        in (f a, s', actions)
-
-instance Applicative (Device s) where
-    pure a = Device $ \(time, s) -> (a, s, [])
-
-    deviceF <*> deviceA = Device $ \(time, s) ->
-        let (f, s', actions) = runDevice deviceF (time, s)
-            (a, s'', actions') = runDevice deviceA (time, s')
-        in (f a, s'', actions ++ actions')
-
-instance Monad (Device s) where
-    device >>= f = Device $ \(time, s) ->
-        let (a, s', actions) = runDevice device (time, s)
-            (b, s'', actions') = runDevice (f a) (time, s')
-        in (b, s'', actions ++ actions')
-
-modifyState :: (DeviceState -> DeviceState) -> Device s ()
-modifyState f = Device $ \(time, s) -> ((), f s, [])
-
-debug :: String -> Device s ()
-debug msg = Device $ \(time, s) -> ((), s, [Log msg])
-
-groupWrite :: GroupAddress -> DPT -> Device s ()
-groupWrite ga dpt = Device $ \(time, s) -> ((), s, [action])
+groupWrite :: GroupAddress -> DPT -> DeviceM s ()
+groupWrite ga dpt = DeviceM $ \(time, s) -> ((), s, [action])
     where
         action = GroupWrite ga dpt
 
-groupRead :: GroupAddress -> (Get DPT) -> (DPT -> Device DeviceState ()) -> Device DeviceState ()
-groupRead ga parser cont = Device $ \(time, s) -> ((), s, [Defer $ GroupReadContinuation ga parser cont])
+groupRead :: GroupAddress -> (Get DPT) -> (DPT -> DeviceM DeviceState ()) -> DeviceM DeviceState ()
+groupRead ga parser cont = DeviceM $ \(time, s) -> ((), s, [Defer $ GroupReadContinuation ga parser cont])
 
-scheduleAt :: UTCTime -> Device DeviceState () -> Device s ()
-scheduleAt time device = Device $ \(_, s) -> ((), s, [action])
+scheduleAt :: UTCTime -> DeviceM DeviceState () -> DeviceM s ()
+scheduleAt time device = DeviceM $ \(_, s) -> ((), s, [action])
     where
         action = Defer $ ScheduledContinuation time device
 
-scheduleIn :: NominalDiffTime -> Device DeviceState () -> Device s ()
+scheduleIn :: NominalDiffTime -> DeviceM DeviceState () -> DeviceM s ()
 scheduleIn offset device = do
     now <- getTime
     scheduleAt (addUTCTime offset $ zonedTimeToUTC now) device
 
-getTime :: Device s ZonedTime
-getTime = Device $ \(time, s) -> (time, s, [])
+getTime :: DeviceM s ZonedTime
+getTime = DeviceM $ \(time, s) -> (time, s, [])

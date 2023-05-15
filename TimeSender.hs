@@ -18,7 +18,7 @@ data TimeSenderConfig = TimeSenderConfig
   , intervalSeconds :: NominalDiffTime
   } deriving (Show)
 
-timeSender :: TimeSenderConfig -> Device (DeviceState) ()
+timeSender :: TimeSenderConfig -> DeviceM (DeviceState) ()
 timeSender conf = loop
   where
     loop = do

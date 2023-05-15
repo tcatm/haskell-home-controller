@@ -59,27 +59,22 @@ main = do
   putStrLn "Closed connection."
 
 
-sampleDevice :: Device (DeviceState) ()
+sampleDevice :: DeviceM (DeviceState) ()
 sampleDevice = do
     time <- getTime
-
-    modifyState $ \(DeviceState counter) -> DeviceState (counter + 1)
-
     debug $ "Time: " ++ show time
     groupRead (GroupAddress 0 1 21) parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
         debug $ "a: " ++ show a
-        modifyState $ \(DeviceState counter) -> DeviceState (counter + 1)
         time <- getTime
         debug $ "Time: " ++ show time
         scheduleIn 5 $ do
-            modifyState $ \(DeviceState counter) -> DeviceState (counter + 1)
             debug $ "a: " ++ show a
             groupWrite (GroupAddress 0 1 11) (DPT18_1 (False, a))
 
         sampleDevice
 
 -- Scene multiplexer
-sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> Device DeviceState ()
+sceneMultiplexer :: GroupAddress -> Int -> GroupAddress -> DeviceM DeviceState ()
 sceneMultiplexer inputAddr offset outputAddr = do
     groupRead inputAddr parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
         groupWrite outputAddr (DPT18_1 (False, a + offset))
