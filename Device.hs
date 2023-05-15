@@ -8,7 +8,8 @@ module Device
     , debug
     , groupWrite
     , groupRead
-    , schedule
+    , scheduleAt
+    , scheduleIn
     , getTime
     ) where
 
@@ -16,6 +17,7 @@ import KNXAddress
 import DPTs
 import Data.Binary.Get
 import Data.Time.Clock
+import Data.Time.LocalTime
 
 data Continuation = Continuation (Device DeviceState ()) -- Used for starting a device
                   | GroupReadContinuation GroupAddress (Get DPT) (DPT -> Device DeviceState ())
@@ -44,7 +46,7 @@ initialDeviceState = DeviceState
     { counter = 0
     }
 
-data Device s a = Device { runDevice :: (UTCTime, DeviceState) -> (a, DeviceState, [Action]) }
+data Device s a = Device { runDevice :: (ZonedTime, DeviceState) -> (a, DeviceState, [Action]) }
 
 instance Show (Device s a) where
     show _ = "Device <function>"
@@ -82,12 +84,17 @@ groupWrite ga dpt = Device $ \(time, s) -> ((), s, [action])
 groupRead :: GroupAddress -> (Get DPT) -> (DPT -> Device DeviceState ()) -> Device DeviceState ()
 groupRead ga parser cont = Device $ \(time, s) -> ((), s, [Defer $ GroupReadContinuation ga parser cont])
 
-schedule :: UTCTime -> Device DeviceState () -> Device s ()
-schedule time device = Device $ \(_, s) -> ((), s, [action])
+scheduleAt :: UTCTime -> Device DeviceState () -> Device s ()
+scheduleAt time device = Device $ \(_, s) -> ((), s, [action])
     where
         action = Defer $ ScheduledContinuation time device
 
-getTime :: Device s UTCTime
+scheduleIn :: NominalDiffTime -> Device DeviceState () -> Device s ()
+scheduleIn offset device = do
+    now <- getTime
+    scheduleAt (addUTCTime offset $ zonedTimeToUTC now) device
+
+getTime :: Device s ZonedTime
 getTime = Device $ \(time, s) -> (time, s, [])
 
 

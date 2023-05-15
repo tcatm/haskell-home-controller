@@ -19,6 +19,7 @@ import Control.Concurrent.MVar
 import Data.Binary.Get
 import Data.List
 import Data.Time.Clock
+import Data.Time.LocalTime
 import System.Console.Pretty
 
 data DeviceInput = KNXGroupMessage IncomingGroupMessage | TimerEvent UTCTime deriving (Show)
@@ -40,7 +41,7 @@ deviceLoop knx continuationsWithState deviceInput = do
 
 performContinuationWithInput :: KNXConnection -> MVar DeviceInput -> DeviceState -> Continuation -> DeviceInput -> IO ([Continuation], DeviceState)
 performContinuationWithInput knx deviceInput state c@(GroupReadContinuation ga parser cont) (KNXGroupMessage msg) = do
-    time <- getCurrentTime
+    time <- getZonedTime
     putStrLn $ color Green $ "Performing " ++ show c
     putStrLn $ color Green $ "    Message: " ++ show msg
 
@@ -53,7 +54,7 @@ performContinuationWithInput knx deviceInput state c@(GroupReadContinuation ga p
 
 performContinuation :: KNXConnection -> MVar DeviceInput -> DeviceState -> Continuation -> IO ([Continuation], DeviceState)
 performContinuation knx deviceInput state c@(Continuation device) = do
-    time <- getCurrentTime
+    time <- getZonedTime
     putStrLn $ color Green $ "Performing " ++ show c
 
     let (a, s, actions) = runDevice device (time, state)
@@ -61,7 +62,7 @@ performContinuation knx deviceInput state c@(Continuation device) = do
     performDeviceActions knx deviceInput s actions
 
 performContinuation knx deviceInput state c@(ScheduledContinuation _ device) = do
-    time <- getCurrentTime
+    time <- getZonedTime
     putStrLn $ color Green $ "Performing " ++ show c
 
     let (a, s, actions) = runDevice device (time, state)
@@ -75,7 +76,7 @@ startDevice knx deviceInput device = do
 
 processDeviceInput :: KNXConnection -> MVar DeviceInput -> DeviceInput -> ([Continuation], DeviceState) -> IO ([Continuation], DeviceState)
 processDeviceInput knx deviceInput (KNXGroupMessage msg) (continuations, state) = do
-    time <- getCurrentTime
+    time <- getZonedTime
     let groupAddress = incomingGroupAddress msg
     -- partition continuations into those that match the incoming message and those that don't
 
