@@ -11,6 +11,8 @@ import Control.Concurrent
 import Data.Time.Clock
 import qualified Data.Map as Map
 
+import StaircaseLight
+
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
 
@@ -46,7 +48,8 @@ main = do
   deviceInput <- newEmptyMVar
 
   let devices = [ SomeDevice $ sampleDevice
-                , SomeDevice $ timeSender timeSenderConfig
+                --, SomeDevice $ timeSender timeSenderConfig
+                , SomeDevice $ staircaseLight
                 ]
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
@@ -80,14 +83,13 @@ sampleDeviceF = do
     reader ga f = do
       groupRead ga parseDPT6 $ \(DPT6 a) -> do
         debug $ "Read " ++ show a ++ " from " ++ show ga
-        modifyState $ Map.insert ga $ fromIntegral a
+        modify $ Map.insert ga $ fromIntegral a
         f
         reader ga f
 
     tryBoth = do
-      state <- getState
-      let a = Map.lookup groupAddressA state
-      let b = Map.lookup groupAddressB state
+      a <- gets $ Map.lookup groupAddressA
+      b <- gets $ Map.lookup groupAddressB
       case (a, b) of
         (Just a', Just b') -> 
           let sum = a' + b'
