@@ -26,12 +26,12 @@ data DPT = DPT1 Bool -- short
          | DPT6 Int8
          | DPT7 Word16
          | DPT8 Int16
-         | DPT9 Float
+         | DPT9 Double
          | DPT10 (Word, Word, Word, Word) -- 1st Word8 is DayOfWeek (1..7, 0 = no day)
          | DPT11 (Word, Word, Word)
          | DPT12 Word32
          | DPT13 Int32
-         | DPT14 Float
+         | DPT14 Double
          | DPT15 Word32
          | DPT16 String
          | DPT18_1 (Bool, Int)
@@ -58,6 +58,11 @@ encodeDPT dpt =
                             DPT6 v -> (putWord8 $ fromIntegral v, False)
                             DPT7 v -> (putWord16be v, False)
                             DPT8 v -> (putWord16be $ fromIntegral v, False)
+                            DPT9 v -> let (mantissa, exponent) = decodeFloat v
+                                          sign = if mantissa < 0 then 1 else 0
+                                          mant = fromIntegral $ mantissa .&. 0x7FF
+                                          exp = fromIntegral $ exponent + 15
+                                      in (putWord16be $ (sign `shiftL` 15) .|. (exp `shiftL` 11) .|. mant, False)
                             DPT10 (a, b, c, d) ->
                                 ( do
                                     putWord8 $ fromIntegral $ (a `shiftL` 5) .|. b
@@ -82,19 +87,27 @@ encodeDPT dpt =
     in EncodedDPT (runPut result) bool
 
 parseDPT1 :: Get DPT
-parseDPT1 = DPT1 . (/= (0 :: Word8)) <$> get
+parseDPT1 = DPT1 . (/= 0) <$> getWord8
 
 parseDPT2 :: Get DPT
-parseDPT2 = (\v -> DPT2 ((v .&. 0x02 /= (0 :: Word8)), (v .&. 0x01 /= (0 :: Word8)))) <$> get
+parseDPT2 = (\v -> DPT2 ((v .&. 0x02 /= 0), (v .&. 0x01 /= (0 :: Word8)))) <$> getWord8
 
 parseDPT3 :: Get DPT
-parseDPT3 = (\v -> DPT3 $ fromIntegral (((v :: Word8) .&. 0x08 `shiftR` 4) .|. ((v :: Word8) .&. 0x07))) <$> get
+parseDPT3 = (\v -> DPT3 $ fromIntegral ((v .&. 0x08 `shiftR` 4) .|. (v .&. 0x07))) <$> getWord8
 
 parseDPT5 :: Get DPT
-parseDPT5 = DPT5 <$> get
+parseDPT5 = DPT5 <$> getWord8
 
 parseDPT6 :: Get DPT
-parseDPT6 = DPT6 . fromIntegral <$> (get :: Get Int8)
+parseDPT6 = DPT6 . fromIntegral <$> getInt8
+
+parseDPT9 :: Get DPT
+parseDPT9 = do
+    mantissaExponent <- getWord16be
+    let mantissa = fromIntegral $ mantissaExponent .&. 0x07FF
+        exponent = fromIntegral $ (mantissaExponent .&. 0x7800) `shiftR` 11
+        sign = if (mantissaExponent .&. 0x8000) /= 0 then -1 else 1
+    return $ DPT9 $ encodeFloat (sign * mantissa) (exponent - 15)
 
 parseDPT18_1 :: Get DPT
-parseDPT18_1 = (\v -> DPT18_1 (((v :: Word8) .&. 0x80 /= 0), fromIntegral $ (v :: Word8) .&. 0x7F)) <$> get
+parseDPT18_1 = (\v -> DPT18_1 ((v .&. 0x80 /= 0), fromIntegral $ v .&. 0x7F)) <$> getWord8
