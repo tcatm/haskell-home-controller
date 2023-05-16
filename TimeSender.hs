@@ -38,6 +38,8 @@ timeSenderF conf = loop
 
       scheduleIn (intervalSeconds conf) loop
 
+      return ()
+
 timeToBytes :: LocalTime -> (Word, Word, Word, Word)
 timeToBytes time = (fromIntegral dayOfWeek, hour, minute, second)
   where
