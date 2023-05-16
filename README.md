@@ -1,5 +1,5 @@
 # Dependencies
 
 ```
-system-pretty pretty-terminal aeson http-client-tls
+system-pretty pretty-terminal aeson http-client-tls http-conduit
 ```
