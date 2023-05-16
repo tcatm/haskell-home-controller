@@ -25,7 +25,7 @@ lightOffTime = 5
 initialLightState :: LightState
 initialLightState = LightState False False Nothing Nothing
 
-staircaseLight :: SomeDevice
+staircaseLight :: Device
 staircaseLight = makeDevice "StaircaseLight" initialLightState startDevice
 
 startDevice :: DeviceM LightState ()

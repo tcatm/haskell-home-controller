@@ -3,7 +3,7 @@
 module Device 
     ( DeviceM (..)
     , Device (..)
-    , SomeDevice (..)
+    , Device' (..)
     , Continuation (..)
     , Action (..)
     , TimerId (..)
@@ -30,13 +30,13 @@ import Data.Hashable
 import Data.Map (Map)
 import Control.Concurrent
 
-data SomeDevice = forall s. Show s => SomeDevice (Device s)
+data Device = forall s. Show s => Device (Device' s)
 
-data Device s = Device  { deviceName :: String
-                        , deviceState :: s
-                        , deviceContinuations :: [Continuation s]
-                        , deviceTimers :: Map TimerId ThreadId
-                        } deriving (Show)
+data Device' s = Device'    { deviceName :: String
+                            , deviceState :: s
+                            , deviceContinuations :: [Continuation s]
+                            , deviceTimers :: Map TimerId ThreadId
+                            } deriving (Show)
 
 newtype TimerId = TimerId Int deriving (Eq, Ord, Show)
 
@@ -84,8 +84,8 @@ instance Monad (DeviceM s) where
             (b, s'', actions') = runDeviceM (f a) (time, s')
         in (b, s'', actions ++ actions')
 
-makeDevice :: (Show s) => String -> s -> (DeviceM s ()) -> SomeDevice
-makeDevice name state device = SomeDevice $ Device name state [Continuation device] mempty
+makeDevice :: (Show s) => String -> s -> (DeviceM s ()) -> Device
+makeDevice name state device = Device $ Device' name state [Continuation device] mempty
 
 getState :: DeviceM s s
 getState = DeviceM $ \(time, s) -> (s, s, [])

@@ -10,6 +10,7 @@ import DPTs
 import Device hiding (gets, modify)
 import Control.Monad
 import Control.Concurrent
+import Control.Concurrent.STM
 import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
@@ -25,29 +26,29 @@ import System.Console.Pretty
 
 data DeviceInput = NoInput | KNXGroupMessage IncomingGroupMessage | TimerEvent TimerId UTCTime deriving (Show)
 
-type DeviceRunnerT = ReaderT (MVar DeviceInput) KNXM
+type DeviceRunnerT = ReaderT (TQueue DeviceInput) KNXM
 type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
 
-runDevices :: [SomeDevice] -> MVar DeviceInput -> KNXM ()
+runDevices :: [Device] -> TQueue DeviceInput -> KNXM ()
 runDevices devices deviceInput = 
     runReaderT (deviceRunner devices) deviceInput
 
-deviceRunner :: [SomeDevice] -> DeviceRunnerT ()
+deviceRunner :: [Device] -> DeviceRunnerT ()
 deviceRunner devices = do
-    mVar <- ask
+    queue <- ask
     devices' <- mapDevices NoInput devices
 
     let loop devices'' = do
-          input <- liftIO $ takeMVar mVar
+          input <- liftIO $ atomically $ readTQueue queue
           devices''' <- mapDevices input devices''
           loop devices'''
 
     loop devices'        
 
-mapDevices :: DeviceInput -> [SomeDevice] -> DeviceRunnerT [SomeDevice]
-mapDevices input = mapM (\(SomeDevice d) -> SomeDevice <$> processDeviceInput input d)
+mapDevices :: DeviceInput -> [Device] -> DeviceRunnerT [Device]
+mapDevices input = mapM (\(Device d) -> Device <$> processDeviceInput input d)
 
-processDeviceInput :: (Show s) => DeviceInput -> Device s -> DeviceRunnerT (Device s)
+processDeviceInput :: (Show s) => DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
 processDeviceInput input device = do
     let continuations = deviceContinuations device
     let state = deviceState device
@@ -147,12 +148,12 @@ performDeviceAction (Defer continuation) = do
             return ()
 
         ScheduledContinuation timerId time device -> do
-            mVar <- lift $ ask
+            queue <- lift $ ask
             threadId <- liftIO $ forkIO $ do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
                 threadDelay $ ceiling $ 1000000 * delay
-                putMVar mVar $ TimerEvent timerId time
+                atomically $ writeTQueue queue $ TimerEvent timerId time
 
             modify $ Map.insert timerId threadId
             return ()

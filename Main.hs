@@ -8,6 +8,7 @@ import DeviceRunner
 import Console
 import TimeSender
 import Control.Concurrent
+import Control.Concurrent.STM
 import Data.Time.Clock
 import qualified Data.Map as Map
 
@@ -16,10 +17,8 @@ import StaircaseLight
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
 
-knxCallback :: MVar DeviceInput -> KNXCallback
-knxCallback mvar = KNXCallback f
-  where
-    f msg = putMVar mvar (KNXGroupMessage msg)
+knxCallback :: TQueue DeviceInput -> KNXCallback
+knxCallback queue = KNXCallback $ atomically <$> writeTQueue queue . KNXGroupMessage
 
 -- Define a helper function to create a thread and return an MVar
 forkIOWithSync :: IO () -> IO (MVar ())
@@ -45,7 +44,7 @@ main = do
     intervalSeconds = 10
   }
 
-  deviceInput <- newEmptyMVar
+  deviceInput <- newTQueueIO
 
   let devices = [ sampleDevice
                 -- , timeSender timeSenderConfig
@@ -64,7 +63,7 @@ main = do
 
 -- | This device reads two group addresses and prints their sum after both have been read.
 -- | When a new value is read from either group address, the sum is recalculated.
-sampleDevice :: SomeDevice
+sampleDevice :: Device
 sampleDevice = makeDevice "Sample Device" Map.empty sampleDeviceF
 
 sampleDeviceF :: DeviceM (Map.Map GroupAddress Int) ()
