@@ -22,12 +22,11 @@ lightOffAddress = GroupAddress 1 1 9
 lightOffTime :: NominalDiffTime
 lightOffTime = 5
 
-staircaseLight :: Device LightState
-staircaseLight = Device 
-    { deviceName = "Staircase Light"
-    , deviceState = LightState { lightOn = False, timerOn = False, timerId = Nothing, lightOnTime = Nothing }
-    , deviceContinuations = [Continuation startDevice]
-    }
+initialLightState :: LightState
+initialLightState = LightState False False Nothing Nothing
+
+staircaseLight :: SomeDevice
+staircaseLight = makeDevice "StaircaseLight" initialLightState startDevice
 
 startDevice :: DeviceM LightState ()
 startDevice = do
@@ -38,10 +37,11 @@ handleLightSwitch dpt = do
     case dpt of
         DPT1 state -> do
             currentTime <- zonedTimeToUTC <$> getTime
-            if state then
-                modify $ \s -> s { lightOn = state, lightOnTime = Just currentTime }
-            else
-                modify $ \s -> s { lightOn = state }
+            -- if state is true and the light is not already on, remember the time
+            previousState <- gets lightOn
+            when (state && not previousState) $
+                modify $ \s -> s { lightOnTime = Just currentTime }
+            modify $ \s -> s { lightOn = state }
             when state $ do
                 oldTimerId <- gets timerId
                 whenJust oldTimerId cancelTimer

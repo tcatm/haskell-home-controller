@@ -7,6 +7,7 @@ module Device
     , Continuation (..)
     , Action (..)
     , TimerId (..)
+    , makeDevice
     , getState
     , setState
     , gets
@@ -26,26 +27,27 @@ import Data.Binary.Get
 import Data.Time.Clock
 import Data.Time.LocalTime
 import Data.Hashable
+import Data.Map (Map)
+import Control.Concurrent
 
 data SomeDevice = forall s. Show s => SomeDevice (Device s)
 
 data Device s = Device  { deviceName :: String
                         , deviceState :: s
                         , deviceContinuations :: [Continuation s]
-                        }
+                        , deviceTimers :: Map TimerId ThreadId
+                        } deriving (Show)
 
-newtype TimerId = TimerId Int deriving (Eq, Show)
+newtype TimerId = TimerId Int deriving (Eq, Ord, Show)
 
 data Continuation s = Continuation (DeviceM s ()) -- Used for starting a device
                     | GroupReadContinuation GroupAddress (Get DPT) (DPT -> DeviceM s ())
                     | ScheduledContinuation TimerId UTCTime (DeviceM s ())
-                    | CancelScheduledContinuation TimerId
 
 instance Show (Continuation s) where
     show (Continuation _) = "Continuation"
     show (GroupReadContinuation ga _ _) = "GroupReadContinuation " ++ show ga
     show (ScheduledContinuation timerId time _) = "ScheduledContinuation " ++ show timerId ++ " " ++ show time
-    show (CancelScheduledContinuation timerId) = "CancelScheduledContinuation " ++ show timerId
 
 data Action s   = GroupWrite GroupAddress DPT
                 | Defer (Continuation s)
@@ -81,6 +83,9 @@ instance Monad (DeviceM s) where
         let (a, s', actions) = runDeviceM device (time, s)
             (b, s'', actions') = runDeviceM (f a) (time, s')
         in (b, s'', actions ++ actions')
+
+makeDevice :: (Show s) => String -> s -> (DeviceM s ()) -> SomeDevice
+makeDevice name state device = SomeDevice $ Device name state [Continuation device] mempty
 
 getState :: DeviceM s s
 getState = DeviceM $ \(time, s) -> (s, s, [])

@@ -16,14 +16,17 @@ import Control.Monad.Trans.Reader
 import Control.Monad.Trans.State
 import Data.Binary.Get
 import Data.List
+import Data.Maybe
+import Data.Map (Map)
 import Data.Time.Clock
 import Data.Time.LocalTime
 import qualified Data.Map.Strict as Map
 import System.Console.Pretty
 
-data DeviceInput = StartDevice | KNXGroupMessage IncomingGroupMessage | TimerEvent TimerId UTCTime deriving (Show)
+data DeviceInput = NoInput | KNXGroupMessage IncomingGroupMessage | TimerEvent TimerId UTCTime deriving (Show)
 
-type DeviceRunnerT = StateT (Map.Map TimerId ThreadId) (ReaderT (MVar DeviceInput) KNXM)
+type DeviceRunnerT = ReaderT (MVar DeviceInput) KNXM
+type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
 
 runDevices :: [SomeDevice] -> MVar DeviceInput -> KNXM ()
 runDevices devices deviceInput = 
@@ -32,7 +35,7 @@ runDevices devices deviceInput =
 deviceRunner :: [SomeDevice] -> DeviceRunnerT ()
 deviceRunner devices = do
     mVar <- ask
-    devices' <- mapDevices StartDevice devices
+    devices' <- mapDevices NoInput devices
 
     let loop devices'' = do
           input <- liftIO $ takeMVar mVar
@@ -44,99 +47,93 @@ deviceRunner devices = do
 mapDevices :: DeviceInput -> [SomeDevice] -> DeviceRunnerT [SomeDevice]
 mapDevices input = mapM (\(SomeDevice d) -> SomeDevice <$> processDeviceInput input d)
 
-performAction :: (Show s) => s -> Continuation s -> DeviceM s () -> DeviceRunnerT ([Continuation s], s)
-performAction state c device = do
-    time <- liftIO $ getZonedTime
-    liftIO $ putStrLn $ color Green $ "Performing " ++ show c
-
-    let (_, state', actions) = runDeviceM device (time, state)
-
-    liftIO $ putStrLn $ color Green $ "    Final state: " ++ show state'
-    liftIO $ putStrLn $ color Green $ "    Actions: " ++ show actions
-
-    continuations <- performDeviceActions actions
-
-    liftIO $ putStrLn $ color Green $ "    Continuations: " ++ show continuations
-
-    return (continuations, state')
-
-performContinuationWithInput :: (Show s) => DeviceInput -> s  -> Continuation s -> DeviceRunnerT ([Continuation s], s)
-performContinuationWithInput (KNXGroupMessage msg) state c@(GroupReadContinuation ga parser cont) = do
-    let dpt = runGet parser (encodedDPT $ payload msg)
-    liftIO $ putStrLn $ color Green $ "    DPT: " ++ show dpt
-
-    performAction state c (cont dpt)
-
-performContinuation :: (Show s) => s -> Continuation s -> DeviceRunnerT ([Continuation s], s)
-performContinuation state c@(Continuation device) =
-    performAction state c device
-
-performContinuation state c@(ScheduledContinuation _ _ device) =
-    performAction state c device
-
 processDeviceInput :: (Show s) => DeviceInput -> Device s -> DeviceRunnerT (Device s)
 processDeviceInput input device = do
     let continuations = deviceContinuations device
     let state = deviceState device
 
-    let (filterF, performF) = case input of
-            StartDevice ->
-                ((\c -> case c of
-                            Continuation _ -> True
-                            _ -> False),
-                performContinuation )
-            KNXGroupMessage msg ->
-                (let groupAddress = incomingGroupAddress msg in
-                (\c -> case c of
-                            GroupReadContinuation ga _ _ -> ga == groupAddress
-                            _ -> False),
-                performContinuationWithInput (KNXGroupMessage msg))
-            TimerEvent timerId time ->
-                ((\c -> case c of
-                            -- FIXME: use timerId for matching
-                            ScheduledContinuation tId _ _ -> tId == timerId
-                            _ -> False),
-                performContinuation)
+    let filterF = case input of
+                        NoInput -> 
+                            \c -> case c of
+                                Continuation _ -> True
+                                _ -> False
+                        KNXGroupMessage msg -> 
+                            let groupAddress = incomingGroupAddress msg in
+                            \c -> case c of
+                                GroupReadContinuation ga _ _ -> ga == groupAddress
+                                _  -> False
+                        TimerEvent timerId time -> 
+                            \c -> case c of
+                                ScheduledContinuation tId _ _ -> tId == timerId
+                                _ -> False
 
     let (matchingContinuations, otherContinuations) = partition filterF continuations
 
     let f (continuations, state) continuation = do
-            (continuations', state') <- performF state continuation 
+            (continuations', state') <- performContinuation input state continuation 
             return (continuations' ++ continuations, state')
 
-    -- If any devices are run, print a message
-    when (not $ null matchingContinuations) $
-        liftIO $ putStrLn $ color Blue $ "Processing " ++ show input ++ " for " ++ deviceName device
+    if null matchingContinuations
+        then return device
+        else do
+            liftIO $ putStrLn $ color Blue $ "Processing " ++ show input ++ " for " ++ deviceName device
 
-    (continuations', state') <- foldM f ([], state) matchingContinuations
+            ((continuations', state'), timers) <- runStateT (foldM f ([], state) matchingContinuations) $ deviceTimers device
 
-    let continuations'' = continuations' ++ otherContinuations
+            let continuations'' = continuations' ++ otherContinuations
 
-    return device { deviceContinuations = continuations'', deviceState = state' }
+            -- remove any ScheduledContinuations that have no associated timer in timers
+            let continuations''' = filter (\c -> case c of
+                                                    ScheduledContinuation timerId _ _ -> Map.member timerId timers
+                                                    _ -> True) continuations''
 
-performDeviceActions :: (Show s) => [Action s] -> DeviceRunnerT [Continuation s]
-performDeviceActions actions = do
-    let f accumulatedContinuations action = do
-            (maybeContinuation, maybeThreadId) <- performDeviceAction action
-            case maybeThreadId of
-              Just (timerId, threadId) -> modify (Map.insert timerId threadId)
-              Nothing -> return ()
-            return $ case maybeContinuation of
-                Just continuation -> continuation:accumulatedContinuations
-                Nothing -> accumulatedContinuations
+            let device' = device    { deviceContinuations = continuations'''
+                                    , deviceState = state'
+                                    , deviceTimers = timers
+                                    }
 
-    continuations <- foldM f [] actions
+            liftIO $ putStrLn $ color Blue $ "Device: " ++ show device'
 
-    return continuations
+            return device'
 
-performDeviceAction :: Action s -> DeviceRunnerT (Maybe (Continuation s))
+performContinuation :: (Show s) => DeviceInput -> s -> Continuation s -> TimerT ([Continuation s], s)
+performContinuation (KNXGroupMessage msg) state c@(GroupReadContinuation ga parser cont) = do
+    let dpt = runGet parser (encodedDPT $ payload msg)
+    liftIO $ putStrLn $ color Green $ "    DPT: " ++ show dpt
+
+    runDeviceWithEffects state c (cont dpt)
+    
+performContinuation NoInput state c@(Continuation device) =
+    runDeviceWithEffects state c device
+
+performContinuation (TimerEvent timerId _) state c@(ScheduledContinuation _ _ device) = do
+    modify $ Map.delete timerId
+    runDeviceWithEffects state c device
+
+runDeviceWithEffects :: (Show s) => s -> Continuation s -> DeviceM s () -> TimerT ([Continuation s], s)
+runDeviceWithEffects state c device = do
+    time <- liftIO $ getZonedTime
+    liftIO $ putStrLn $ color Green $ "    Performing " ++ show c
+
+    let (_, state', actions) = runDeviceM device (time, state)
+
+    liftIO $ putStrLn $ color Green $ "    Final state: " ++ show state'
+
+    continuations <- performDeviceActions actions
+
+    return (continuations, state')
+
+performDeviceActions :: (Show s) => [Action s] -> TimerT [Continuation s]
+performDeviceActions actions = catMaybes <$> mapM performDeviceAction actions
+
+performDeviceAction :: Action s -> TimerT (Maybe (Continuation s))
 performDeviceAction (Log msg) = do
-    liftIO $ putStrLn $ color Yellow $ msg
+    liftIO $ putStrLn $ color Yellow $ "    " ++ msg
     return Nothing
 
 performDeviceAction (GroupWrite ga dpt) = do
     liftIO $ putStrLn $ color Magenta $ "    GroupMessage " ++ show dpt ++ " to " ++ show ga
-    lift $ KNX.groupWrite $ GroupMessage ga dpt
+    lift $ lift $ KNX.groupWrite $ GroupMessage ga dpt
     return Nothing
 
 performDeviceAction (Defer continuation) = do
@@ -150,17 +147,25 @@ performDeviceAction (Defer continuation) = do
             return ()
 
         ScheduledContinuation timerId time device -> do
-            mVar <- ask
-            liftIO $ forkIO $ do
+            mVar <- lift $ ask
+            threadId <- liftIO $ forkIO $ do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
                 threadDelay $ ceiling $ 1000000 * delay
                 putMVar mVar $ TimerEvent timerId time
 
+            modify $ Map.insert timerId threadId
             return ()
 
     return $ Just continuation
-
+    
 performDeviceAction (CancelTimer timerId) = do
-    liftIO $ putStrLn $ color Magenta $ "    Canceling timer: " ++ show timerId
+    liftIO $ putStrLn $ color Red $ "    Canceling timer: " ++ show timerId
+
+    threadId <- gets $ Map.lookup timerId
+    
+    when (isJust threadId) $ do
+        modify $ Map.delete timerId
+        liftIO $ killThread $ fromJust threadId
+
     return Nothing

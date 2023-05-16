@@ -47,9 +47,9 @@ main = do
 
   deviceInput <- newEmptyMVar
 
-  let devices = [ SomeDevice $ sampleDevice
-                --, SomeDevice $ timeSender timeSenderConfig
-                , SomeDevice $ staircaseLight
+  let devices = [ sampleDevice
+                -- , timeSender timeSenderConfig
+                , staircaseLight
                 ]
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
@@ -64,8 +64,8 @@ main = do
 
 -- | This device reads two group addresses and prints their sum after both have been read.
 -- | When a new value is read from either group address, the sum is recalculated.
-sampleDevice :: Device (Map.Map GroupAddress Int)
-sampleDevice = Device "Sample Device" Map.empty [Continuation sampleDeviceF]
+sampleDevice :: SomeDevice
+sampleDevice = makeDevice "Sample Device" Map.empty sampleDeviceF
 
 sampleDeviceF :: DeviceM (Map.Map GroupAddress Int) ()
 sampleDeviceF = do
@@ -96,7 +96,7 @@ sampleDeviceF = do
           in debug $ "a + b = " ++ show sum
         _ -> return ()
     
-sceneMultiplexer inputGA offset ouputGA = Device "Scene Multiplexer" () [Continuation (sceneMultiplexerF inputGA offset ouputGA)]
+sceneMultiplexer inputGA offset ouputGA = makeDevice "Scene Multiplexer" () $ sceneMultiplexerF inputGA offset ouputGA
 
 sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM () ()
 sceneMultiplexerF inputAddr offset outputAddr = do
