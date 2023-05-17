@@ -18,9 +18,9 @@ putKNXFloat16 v =
     if isNaN v
         then putWord16be 0x7FFF
     else   
-        let v' = v * 100 / 2048
+        let v' = v * 100
             (m, e) = decodeFloat v'
-            (m', e') = scaleExponent 0 15 $ ((fromIntegral m) / 2.0^^53, e + 53)
+            (m', e') = scaleExponent 42 0 15 $ (fromIntegral m, e)
             mantissaInt = round m' :: Int16
             mantissaWord = fromIntegral $ max (-2048) (min 2046 mantissaInt) :: Word16
             mantissaBits = mantissaWord .&. 0x87FF
@@ -35,16 +35,18 @@ putKNXFloat16 v =
                     ++ word16ToBits exponentBits) $
             putWord16be . fromIntegral $ exponentBits .|. mantissaBits
         where
-            scaleExponent :: Int -> Int -> (Double, Int) -> (Double, Int)
-            scaleExponent low high (m, e) = 
-                let (s, e') =   if e > high
-                                    then (e - high, high)
-                                else if e < low
-                                    then (e - low, low)
-                                else (0, e)
-                in trace ("scaleExponent: " ++ show (m, e) ++ " -> " ++ show (m * 2^^s, e'))
-                    (scaleFloat (s+11) m, e')
-
+            scaleExponent :: Int -> Int -> Int -> (Double, Int) -> (Double, Int)
+            scaleExponent offset low high (m, e) = 
+                let s' = e - e' + offset
+                    m' = scaleFloat (s' - offset) m
+                in trace ("scaleExponent: " ++ show (m, e) ++ " -> " ++ show (m', e'))
+                    (m', e')
+                where
+                    e' = case () of
+                        _ | e + offset < low -> low
+                          | e + offset > high -> high
+                          | otherwise -> e + offset
+                          
             word16ToBits :: Word16 -> String
             word16ToBits w = let s = concatMap (\i -> if w .&. (1 `shiftL` i) /= 0 then "1" else "0") [15,14..0]
                             in take 1 s ++ " " ++ take 4 (drop 1 s) ++ " " ++ take 11 (drop 5 s)
