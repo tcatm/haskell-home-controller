@@ -41,12 +41,12 @@ data Device' s = Device'    { deviceName :: String
 
 newtype TimerId = TimerId Int deriving (Eq, Ord, Show)
 
-data Continuation s = Continuation (DeviceM s ()) -- Used for starting a device
+data Continuation s = StartContinuation (DeviceM s ())
                     | GroupReadContinuation GroupAddress (Get DPT) (DPT -> DeviceM s ())
                     | ScheduledContinuation TimerId UTCTime (DeviceM s ())
 
 instance Show (Continuation s) where
-    show (Continuation _) = "Continuation"
+    show (StartContinuation _) = "StartContinuation"
     show (GroupReadContinuation ga _ _) = "GroupReadContinuation " ++ show ga
     show (ScheduledContinuation timerId time _) = "ScheduledContinuation " ++ show timerId ++ " " ++ show time
 
@@ -86,7 +86,7 @@ instance Monad (DeviceM s) where
         in (b, s'', actions ++ actions')
 
 makeDevice :: (Show s) => String -> s -> (DeviceM s ()) -> Device
-makeDevice name state device = Device $ Device' name state [Continuation device] mempty
+makeDevice name state device = Device $ Device' name state [StartContinuation device] mempty
 
 getState :: DeviceM s s
 getState = DeviceM $ \(time, s) -> (s, s, [])

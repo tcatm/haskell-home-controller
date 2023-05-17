@@ -24,7 +24,7 @@ import Data.Time.LocalTime
 import qualified Data.Map.Strict as Map
 import System.Console.Pretty
 
-data DeviceInput = NoInput | KNXGroupMessage IncomingGroupMessage | TimerEvent TimerId UTCTime deriving (Show)
+data DeviceInput = StartDevice | KNXGroupMessage IncomingGroupMessage | TimerEvent TimerId UTCTime deriving (Show)
 
 type DeviceRunnerT = ReaderT (TQueue DeviceInput) KNXM
 type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
@@ -36,7 +36,7 @@ runDevices devices deviceInput =
 deviceRunner :: [Device] -> DeviceRunnerT ()
 deviceRunner devices = do
     queue <- ask
-    devices' <- mapDevices NoInput devices
+    devices' <- mapDevices StartDevice devices
 
     let loop devices'' = do
           input <- liftIO $ atomically $ readTQueue queue
@@ -54,9 +54,9 @@ processDeviceInput input device = do
     let state = deviceState device
 
     let filterF = case input of
-                        NoInput -> 
+                        StartDevice -> 
                             \c -> case c of
-                                Continuation _ -> True
+                                StartContinuation _ -> True
                                 _ -> False
                         KNXGroupMessage msg -> 
                             let groupAddress = incomingGroupAddress msg in
@@ -104,7 +104,7 @@ performContinuation (KNXGroupMessage msg) state c@(GroupReadContinuation ga pars
 
     runDeviceWithEffects state c (cont dpt)
     
-performContinuation NoInput state c@(Continuation device) =
+performContinuation _ state c@(StartContinuation device) =
     runDeviceWithEffects state c device
 
 performContinuation (TimerEvent timerId _) state c@(ScheduledContinuation _ _ device) = do
@@ -139,13 +139,15 @@ performDeviceAction (GroupWrite ga dpt) = do
 
 performDeviceAction (Defer continuation) = do
     liftIO $ putStrLn $ color Magenta $ "    Deferring continuation: " ++ show continuation
+
     case continuation of
-        Continuation device -> do
-            return ()
+        StartContinuation device -> do
+            liftIO $ putStrLn $ color Red $ "    Ignored deferred StartContinuation"
+            return Nothing
 
         GroupReadContinuation ga _ _ -> do
             -- TODO: Maybe trigger a group read on KNX?
-            return ()
+            return $ Just continuation
 
         ScheduledContinuation timerId time device -> do
             queue <- lift $ ask
@@ -156,9 +158,7 @@ performDeviceAction (Defer continuation) = do
                 atomically $ writeTQueue queue $ TimerEvent timerId time
 
             modify $ Map.insert timerId threadId
-            return ()
-
-    return $ Just continuation
+            return $ Just continuation
     
 performDeviceAction (CancelTimer timerId) = do
     liftIO $ putStrLn $ color Red $ "    Canceling timer: " ++ show timerId
