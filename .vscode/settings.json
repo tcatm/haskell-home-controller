@@ -1,0 +1,8 @@
+{
+    "files.exclude": {
+        "**/*.hi": true,
+        "**/*.o": true,
+        "**/*.dyn_hi": true,
+        "**/*.dyn_o": true,
+    }
+}
