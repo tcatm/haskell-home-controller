@@ -19,6 +19,9 @@ import Data.Int
 import Data.Bits
 import qualified Data.ByteString.Lazy as LBS
 
+import Data.Time.Clock
+import Data.Time.Calendar
+
 import KNXDatatypes
 
 data DPT = DPT1 Bool -- short
@@ -30,8 +33,8 @@ data DPT = DPT1 Bool -- short
          | DPT7 Word16
          | DPT8 Int16
          | DPT9 Double
-         | DPT10 (Word, Word, Word, Word) -- 1st Word8 is DayOfWeek (1..7, 0 = no day)
-         | DPT11 (Word, Word, Word)
+         | DPT10 KNXTimeOfDay
+         | DPT11 Day
          | DPT12 Word32
          | DPT13 Int32
          | DPT14 Double
@@ -62,18 +65,13 @@ encodeDPT dpt =
                             DPT7 v -> (putWord16be v, False)
                             DPT8 v -> (putWord16be $ fromIntegral v, False)
                             DPT9 v -> (putKNXFloat16 v, False)
-                            DPT10 (a, b, c, d) ->
-                                ( do
-                                    putWord8 $ fromIntegral $ (a `shiftL` 5) .|. b
-                                    putWord8 $ fromIntegral c
-                                    putWord8 $ fromIntegral d
-                                , False)
-                            DPT11 (a, b, c) ->
-                                ( do
-                                    putWord8 $ fromIntegral a
-                                    putWord8 $ fromIntegral b
-                                    putWord8 $ fromIntegral c
-                                , False)
+                            DPT10 v -> (put v, False)
+                            DPT11 v -> let (year, month, day) = toGregorian v
+                                       in ( do
+                                            putWord8 $ fromIntegral day
+                                            putWord8 $ fromIntegral month
+                                            putWord8 $ fromIntegral $ year - 1900
+                                        , False)
                             DPT12 v -> (putWord32be v, False)
                             DPT13 v -> (putWord32be $ fromIntegral v, False)
                             DPT16 v -> (putStringUtf8 v, False)
@@ -102,6 +100,18 @@ parseDPT6 = DPT6 . fromIntegral <$> getInt8
 
 parseDPT9 :: Get DPT
 parseDPT9 = DPT9 <$> getKNXFloat16
+
+parseDPT10 :: Get DPT
+parseDPT10 = DPT10 <$> get
+
+parseDPT11 :: Get DPT
+parseDPT11 = do
+    a <- getWord8
+    b <- getWord8
+    c <- getWord8
+    let year = fromIntegral c
+    let interpretedYear = if year >= 90 then 1900 + year else 2000 + year
+    return $ DPT11 $ fromGregorian (fromIntegral interpretedYear) (fromIntegral b) (fromIntegral a)
 
 parseDPT18_1 :: Get DPT
 parseDPT18_1 = (\v -> DPT18_1 ((v .&. 0x80 /= 0), fromIntegral $ v .&. 0x7F)) <$> getWord8

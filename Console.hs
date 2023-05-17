@@ -39,8 +39,6 @@ parseInput (groupAddressStr:dptName:value) = do
               "DPT7" -> DPT7 $ read $ head value
               "DPT8" -> DPT8 $ read $ head value
               "DPT9" -> DPT9 $ read $ head value
-              "DPT10" -> DPT10 $ (\[a, b, c, d] -> (a, b, c, d)) $ map read value
-              "DPT11" -> DPT11 $ (\[a, b, c] -> (a, b, c)) $ map read value
               "DPT12" -> DPT12 $ read $ head value
               "DPT13" -> DPT13 $ read $ head value
               "DPT14" -> DPT14 $ read $ head value

@@ -1,5 +1,6 @@
 module KNXDatatypes
-    ( putKNXFloat16
+    ( KNXTimeOfDay (..)
+    , putKNXFloat16
     , getKNXFloat16
     ) where
 
@@ -9,9 +10,44 @@ import Data.Binary.Get
 import Data.Binary.Put
 import Data.Word
 import Data.Int
+import Data.Time.Clock
+import Data.Time.LocalTime
+import Data.Time.Calendar
+
 import GHC.Float
 
 import Debug.Trace
+
+data KNXTimeOfDay = KNXTimeOfDay
+    { knxWeekDay :: Maybe DayOfWeek
+    , knxTimeOfDay :: TimeOfDay
+    } deriving (Eq, Show)
+
+instance Binary KNXTimeOfDay where
+    put (KNXTimeOfDay weekDay timeOfDay) = do
+        let weekDay' = fromIntegral $ case weekDay of
+                Nothing -> 0x00
+                Just dow -> fromEnum dow
+            hour = fromIntegral $ todHour timeOfDay
+            min = fromIntegral $ todMin timeOfDay
+            sec = round $ todSec timeOfDay
+
+        putWord8 $ weekDay' `shiftL` 5 .|. hour
+        putWord8 $ min
+        putWord8 $ sec
+
+    get = do
+        b1 <- getWord8
+        b2 <- getWord8
+        b3 <- getWord8
+
+        let hour = fromIntegral $ b1 .&. 0x1F
+            weekDay' = case b1 `shiftR` 5 of
+                0x00 -> Nothing
+                dow -> Just $ toEnum $ fromIntegral dow
+            min = fromIntegral b2
+            sec = fromIntegral b3
+        return $ KNXTimeOfDay weekDay' $ TimeOfDay hour min sec
 
 putKNXFloat16 :: Double -> Put
 putKNXFloat16 v =
