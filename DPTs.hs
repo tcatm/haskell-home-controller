@@ -7,6 +7,7 @@ module DPTs
     , parseDPT3
     , parseDPT5
     , parseDPT6
+    , parseDPT9
     , parseDPT18_1
     ) where
 
@@ -17,6 +18,15 @@ import Data.Word
 import Data.Int
 import Data.Bits
 import qualified Data.ByteString.Lazy as LBS
+
+import Debug.Trace
+
+-- Helper functions to get mantissa and exponent
+frexp :: Double -> (Double, Int)
+frexp x = (m', e')
+  where m' = (fromIntegral m) / 2.0^^53
+        e' = e + 53
+        (m, e) = decodeFloat x
 
 data DPT = DPT1 Bool -- short
          | DPT2 (Bool, Bool) --short
@@ -58,11 +68,31 @@ encodeDPT dpt =
                             DPT6 v -> (putWord8 $ fromIntegral v, False)
                             DPT7 v -> (putWord16be v, False)
                             DPT8 v -> (putWord16be $ fromIntegral v, False)
-                            DPT9 v -> let (mantissa, exponent) = decodeFloat v
-                                          sign = if mantissa < 0 then 1 else 0
-                                          mant = fromIntegral $ mantissa .&. 0x7FF
-                                          exp = fromIntegral $ exponent + 15
-                                      in (putWord16be $ (sign `shiftL` 15) .|. (exp `shiftL` 11) .|. mant, False)
+                            DPT9 v ->   if isNaN v
+                                            then (putWord16be 0x7FFF, False)
+                                        else   
+                                            let (m, e) = scaleExponent 0 15 $ frexp $ v * 100/2048
+                                                mantissaInt = round (m * 2048) :: Int16
+                                                mantissaWord = fromIntegral $ max (-2048) (min 2046 mantissaInt) :: Word16
+                                                mantissaBits = mantissaWord .&. 0x87FF
+                                                exponentBits = fromIntegral $ (e `shiftL` 11) .&. 0x7800
+                                            in  trace ("DPT9: " ++ show v ++ " -> " ++ show (word16ToBits mantissaBits, word16ToBits exponentBits))
+                                                (putWord16be . fromIntegral $ exponentBits .|. mantissaBits, False)
+                                            where
+                                                scaleExponent :: Int -> Int -> (Double, Int) -> (Double, Int)
+                                                scaleExponent low high (m, e) = 
+                                                    let (s, e') =   if e > high
+                                                                        then (e - high, high)
+                                                                    else if e < low
+                                                                        then (e - low, low)
+                                                                    else (0, e)
+                                                    in trace ("scaleExponent: " ++ show (m, e) ++ " -> " ++ show (m * 2^^s, e'))
+                                                        (scaleFloat s m, e')
+
+                                                word16ToBits :: Word16 -> String
+                                                word16ToBits w = let s = concatMap (\i -> if w .&. (1 `shiftL` i) /= 0 then "1" else "0") [15,14..0]
+                                                                in take 1 s ++ " " ++ take 4 (drop 1 s) ++ " " ++ take 11 (drop 5 s)
+
                             DPT10 (a, b, c, d) ->
                                 ( do
                                     putWord8 $ fromIntegral $ (a `shiftL` 5) .|. b
@@ -90,7 +120,7 @@ parseDPT1 :: Get DPT
 parseDPT1 = DPT1 . (/= 0) <$> getWord8
 
 parseDPT2 :: Get DPT
-parseDPT2 = (\v -> DPT2 ((v .&. 0x02 /= 0), (v .&. 0x01 /= (0 :: Word8)))) <$> getWord8
+parseDPT2 = (\v -> DPT2 ((v .&. 0x02 /= 0), (v .&. 0x01 /= 0))) <$> getWord8
 
 parseDPT3 :: Get DPT
 parseDPT3 = (\v -> DPT3 $ fromIntegral ((v .&. 0x08 `shiftR` 4) .|. (v .&. 0x07))) <$> getWord8
@@ -104,10 +134,15 @@ parseDPT6 = DPT6 . fromIntegral <$> getInt8
 parseDPT9 :: Get DPT
 parseDPT9 = do
     mantissaExponent <- getWord16be
-    let mantissa = fromIntegral $ mantissaExponent .&. 0x07FF
+    let mantissaRaw = mantissaExponent .&. 0x07FF
+        mantissa = if negative
+            then - (fromIntegral $ complement (mantissaRaw .|. 0xF800))
+            else fromIntegral $ mantissaRaw
         exponent = fromIntegral $ (mantissaExponent .&. 0x7800) `shiftR` 11
-        sign = if (mantissaExponent .&. 0x8000) /= 0 then -1 else 1
-    return $ DPT9 $ encodeFloat (sign * mantissa) (exponent - 15)
+        negative = mantissaExponent .&. 0x8000 /= 0
+    if mantissaExponent == 0x7FFF
+        then return $ DPT9 $ 0.0 / 0.0
+        else return $ DPT9 $ 0.01 * encodeFloat mantissa exponent
 
 parseDPT18_1 :: Get DPT
 parseDPT18_1 = (\v -> DPT18_1 ((v .&. 0x80 /= 0), fromIntegral $ v .&. 0x7F)) <$> getWord8

@@ -49,6 +49,7 @@ main = do
   let devices = [ sampleDevice
                 -- , timeSender timeSenderConfig
                 , staircaseLight
+                , temperatureLogger (GroupAddress 3 2 2)
                 ]
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
@@ -102,3 +103,12 @@ sceneMultiplexerF inputAddr offset outputAddr = do
     groupRead inputAddr parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
         groupWrite outputAddr (DPT18_1 (False, a + offset))
         sceneMultiplexerF inputAddr offset outputAddr
+
+temperatureLogger :: GroupAddress -> Device
+temperatureLogger ga = makeDevice "Temperature Logger" () $ temperatureLoggerF ga
+
+temperatureLoggerF :: GroupAddress -> DeviceM () ()
+temperatureLoggerF ga = do
+    groupRead ga parseDPT9 $ \(DPT9 a) -> do
+        debug $ "Temperature is " ++ show a ++ "°C"
+        temperatureLoggerF ga
