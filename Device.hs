@@ -19,6 +19,7 @@ module Device
     , scheduleIn
     , cancelTimer
     , getTime
+    , eventLoop
     ) where
 
 import KNXAddress
@@ -126,3 +127,10 @@ cancelTimer timerId = DeviceM $ \(time, s) -> ((), s, [CancelTimer timerId])
 
 getTime :: DeviceM s ZonedTime
 getTime = DeviceM $ \(time, s) -> (time, s, [])
+
+--- Library functions
+
+eventLoop :: ((a -> DeviceM s ()) -> DeviceM s ()) -> (a -> DeviceM s ()) -> DeviceM s ()
+eventLoop f h = f $ \a -> do
+    h a
+    eventLoop f h

@@ -30,7 +30,7 @@ staircaseLight = makeDevice "StaircaseLight" initialLightState startDevice
 
 startDevice :: DeviceM LightState ()
 startDevice = do
-    groupRead lightOnAddress parseDPT1 handleLightSwitch
+    eventLoop (groupRead lightOnAddress parseDPT1) handleLightSwitch
 
 handleLightSwitch :: DPT -> DeviceM LightState ()
 handleLightSwitch dpt = do
@@ -48,7 +48,6 @@ handleLightSwitch dpt = do
                 newTimerId <- scheduleIn lightOffTime turnOffLight
                 modify $ \s -> s { timerOn = True, timerId = Just newTimerId }
         _ -> return ()
-    startDevice -- This will keep the loop going.
 
 turnOffLight :: DeviceM LightState ()
 turnOffLight = do

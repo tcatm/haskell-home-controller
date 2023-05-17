@@ -9,10 +9,10 @@ import Console
 import TimeSender
 import Control.Concurrent
 import Control.Concurrent.STM
-import Data.Time.Clock
 import qualified Data.Map as Map
 
 import StaircaseLight
+import BlindsDevice
 
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
@@ -50,9 +50,10 @@ main = do
   let temperatureGAs = map (\i -> GroupAddress 3 2 i) [1..12]
 
   let devices = [ sampleDevice
-                -- , timeSender timeSenderConfig
-                , staircaseLight
-                ] ++ map temperatureLogger temperatureGAs
+                --, timeSender timeSenderConfig
+                --, staircaseLight
+                , blindsDeviceKitchen
+                ] -- ++ map temperatureLogger temperatureGAs
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
                 , stdinLoop knx
@@ -80,14 +81,10 @@ sampleDeviceF = do
     groupAddressA = GroupAddress 0 0 1
     groupAddressB = GroupAddress 0 0 2
 
-    readAndTry ga = reader ga tryBoth
-
-    reader ga f = do
-      groupRead ga parseDPT6 $ \(DPT6 a) -> do
+    readAndTry ga = eventLoop (groupRead ga parseDPT6) $ \(DPT6 a) -> do
         debug $ "Read " ++ show a ++ " from " ++ show ga
         modify $ Map.insert ga $ fromIntegral a
-        f
-        reader ga f
+        tryBoth
 
     tryBoth = do
       a <- gets $ Map.lookup groupAddressA
@@ -102,15 +99,27 @@ sceneMultiplexer inputGA offset ouputGA = makeDevice "Scene Multiplexer" () $ sc
 
 sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM () ()
 sceneMultiplexerF inputAddr offset outputAddr = do
-    groupRead inputAddr parseDPT18_1 $ \(DPT18_1 (False, a)) -> do
+    eventLoop (groupRead inputAddr parseDPT18_1) $ \(DPT18_1 (False, a)) -> do
         groupWrite outputAddr (DPT18_1 (False, a + offset))
-        sceneMultiplexerF inputAddr offset outputAddr
 
 temperatureLogger :: GroupAddress -> Device
 temperatureLogger ga = makeDevice "Temperature Logger" () $ temperatureLoggerF ga
 
 temperatureLoggerF :: GroupAddress -> DeviceM () ()
 temperatureLoggerF ga = do
-    groupRead ga parseDPT9 $ \(DPT9 a) -> do
+    eventLoop (groupRead ga parseDPT9) $ \(DPT9 a) -> do
         debug $ "Temperature is " ++ show a ++ "°C"
-        temperatureLoggerF ga
+
+blindsDeviceKitchen :: Device
+blindsDeviceKitchen = makeBlindsDevice "Sonnenschutz Küche" blindsConfigKitchen
+
+blindsConfigKitchen = BlindsConfig
+    { upDownGA = GroupAddress 2 2 3
+    , stopGA = GroupAddress 2 3 3
+    , positionGA = GroupAddress 2 4 3
+    , positionStateGA = GroupAddress 2 5 3
+    , openGA = GroupAddress 2 1 39
+    , closeGA = GroupAddress 2 1 40
+    , timeToMove = 19
+    , motorStartDelay = 3
+    }
