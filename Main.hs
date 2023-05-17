@@ -46,11 +46,13 @@ main = do
 
   deviceInput <- newTQueueIO
 
+  -- all temperatures from 3 2 1 till 3 2 12
+  let temperatureGAs = map (\i -> GroupAddress 3 2 i) [1..12]
+
   let devices = [ sampleDevice
                 -- , timeSender timeSenderConfig
                 , staircaseLight
-                , temperatureLogger (GroupAddress 3 2 2)
-                ]
+                ] ++ map temperatureLogger temperatureGAs
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
                 , stdinLoop knx

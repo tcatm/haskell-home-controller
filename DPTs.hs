@@ -19,14 +19,7 @@ import Data.Int
 import Data.Bits
 import qualified Data.ByteString.Lazy as LBS
 
-import Debug.Trace
-
--- Helper functions to get mantissa and exponent
-frexp :: Double -> (Double, Int)
-frexp x = (m', e')
-  where m' = (fromIntegral m) / 2.0^^53
-        e' = e + 53
-        (m, e) = decodeFloat x
+import KNXDatatypes
 
 data DPT = DPT1 Bool -- short
          | DPT2 (Bool, Bool) --short
@@ -68,31 +61,7 @@ encodeDPT dpt =
                             DPT6 v -> (putWord8 $ fromIntegral v, False)
                             DPT7 v -> (putWord16be v, False)
                             DPT8 v -> (putWord16be $ fromIntegral v, False)
-                            DPT9 v ->   if isNaN v
-                                            then (putWord16be 0x7FFF, False)
-                                        else   
-                                            let (m, e) = scaleExponent 0 15 $ frexp $ v * 100/2048
-                                                mantissaInt = round (m * 2048) :: Int16
-                                                mantissaWord = fromIntegral $ max (-2048) (min 2046 mantissaInt) :: Word16
-                                                mantissaBits = mantissaWord .&. 0x87FF
-                                                exponentBits = fromIntegral $ (e `shiftL` 11) .&. 0x7800
-                                            in  trace ("DPT9: " ++ show v ++ " -> " ++ show (word16ToBits mantissaBits, word16ToBits exponentBits))
-                                                (putWord16be . fromIntegral $ exponentBits .|. mantissaBits, False)
-                                            where
-                                                scaleExponent :: Int -> Int -> (Double, Int) -> (Double, Int)
-                                                scaleExponent low high (m, e) = 
-                                                    let (s, e') =   if e > high
-                                                                        then (e - high, high)
-                                                                    else if e < low
-                                                                        then (e - low, low)
-                                                                    else (0, e)
-                                                    in trace ("scaleExponent: " ++ show (m, e) ++ " -> " ++ show (m * 2^^s, e'))
-                                                        (scaleFloat s m, e')
-
-                                                word16ToBits :: Word16 -> String
-                                                word16ToBits w = let s = concatMap (\i -> if w .&. (1 `shiftL` i) /= 0 then "1" else "0") [15,14..0]
-                                                                in take 1 s ++ " " ++ take 4 (drop 1 s) ++ " " ++ take 11 (drop 5 s)
-
+                            DPT9 v -> (putKNXFloat16 v, False)
                             DPT10 (a, b, c, d) ->
                                 ( do
                                     putWord8 $ fromIntegral $ (a `shiftL` 5) .|. b
@@ -132,17 +101,7 @@ parseDPT6 :: Get DPT
 parseDPT6 = DPT6 . fromIntegral <$> getInt8
 
 parseDPT9 :: Get DPT
-parseDPT9 = do
-    mantissaExponent <- getWord16be
-    let mantissaRaw = mantissaExponent .&. 0x07FF
-        mantissa = if negative
-            then - (fromIntegral $ complement (mantissaRaw .|. 0xF800))
-            else fromIntegral $ mantissaRaw
-        exponent = fromIntegral $ (mantissaExponent .&. 0x7800) `shiftR` 11
-        negative = mantissaExponent .&. 0x8000 /= 0
-    if mantissaExponent == 0x7FFF
-        then return $ DPT9 $ 0.0 / 0.0
-        else return $ DPT9 $ 0.01 * encodeFloat mantissa exponent
+parseDPT9 = DPT9 <$> getKNXFloat16
 
 parseDPT18_1 :: Get DPT
 parseDPT18_1 = (\v -> DPT18_1 ((v .&. 0x80 /= 0), fromIntegral $ v .&. 0x7F)) <$> getWord8
