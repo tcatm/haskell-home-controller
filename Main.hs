@@ -15,6 +15,7 @@ import qualified Data.Map as Map
 
 import StaircaseLight
 import BlindsDevice
+import qualified ElphiWohnung as Elphi
 
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
@@ -47,11 +48,7 @@ main = runStdoutLoggingT $ filterLogger logFilter $ do
   knx <- connectKnx knxGatewayHost knxGatewayPort
   deviceInput <- liftIO $ newTQueueIO
 
-  let devices = [ sampleDevice
-                --, timeSender timeSenderConfig
-                --, staircaseLight
-                , blindsDeviceKitchen
-                ] ++ temperatureLoggers
+  let devices = Elphi.devices
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
                 , stdinLoop knx
@@ -59,15 +56,6 @@ main = runStdoutLoggingT $ filterLogger logFilter $ do
                 ]
 
   waitAllThreads actions
-
-timeSenderConfig = TimeSenderConfig
-                            { timeGA = GroupAddress 0 0 1
-                            , dateGA = GroupAddress 0 0 2
-                            , intervalSeconds = 10
-                            }
-
-temperatureGAs = map (\i -> GroupAddress 3 2 i) [1..12]
-temperatureLoggers = map temperatureLogger temperatureGAs
 
 -- | This device reads two group addresses and prints their sum after both have been read.
 -- | When a new value is read from either group address, the sum is recalculated.
@@ -105,26 +93,3 @@ sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM () ()
 sceneMultiplexerF inputAddr offset outputAddr = do
     eventLoop (groupValue inputAddr parseDPT18_1) $ \(DPT18_1 (False, a)) -> do
         groupWrite outputAddr (DPT18_1 (False, a + offset))
-
-temperatureLogger :: GroupAddress -> Device
-temperatureLogger ga = makeDevice "Temperature Logger" () $ temperatureLoggerF ga
-
-temperatureLoggerF :: GroupAddress -> DeviceM () ()
-temperatureLoggerF ga = do
-    groupRead ga
-    eventLoop (groupValue ga parseDPT9) $ \(DPT9 a) -> do
-        debug $ "Temperature is " ++ show a ++ "°C"
-
-blindsDeviceKitchen :: Device
-blindsDeviceKitchen = makeBlindsDevice "Sonnenschutz Küche" blindsConfigKitchen
-
-blindsConfigKitchen = BlindsConfig
-    { upDownGA = GroupAddress 2 2 3
-    , stopGA = GroupAddress 2 3 3
-    , positionGA = GroupAddress 2 4 3
-    , positionStateGA = GroupAddress 2 5 3
-    , openGA = GroupAddress 2 1 39
-    , closeGA = GroupAddress 2 1 40
-    , timeToMove = 19
-    , motorStartDelay = 3
-    }
