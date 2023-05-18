@@ -8,8 +8,6 @@ module Device
     , Action (..)
     , TimerId (..)
     , makeDevice
-    , getState
-    , setState
     , gets
     , modify
     , debug
@@ -90,12 +88,6 @@ instance Monad (DeviceM s) where
 
 makeDevice :: (Show s) => String -> s -> (DeviceM s ()) -> Device
 makeDevice name state device = Device $ Device' name state [StartContinuation device] mempty
-
-getState :: DeviceM s s
-getState = DeviceM $ \(time, s) -> (s, s, [])
-
-setState :: s -> DeviceM s ()
-setState s = DeviceM $ \(time, _) -> ((), s, [])
 
 gets :: (s -> a) -> DeviceM s a
 gets f = DeviceM $ \(time, s) -> (f s, s, [])
