@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module KNX 
     ( connectKnx
@@ -13,6 +14,7 @@ module KNX
     , KNXCallback (..)
     , KNXM (..)
     , runKNX
+    , logSourceKNX
     ) where
 
 import APDU
@@ -23,6 +25,7 @@ import KNXMessages
 
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
 import Network.Socket.ByteString (send, recv)
+import Data.Text (pack)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Binary as B
 import Data.Binary.Get
@@ -34,15 +37,19 @@ import Control.Monad.Trans.State
 import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
+import Control.Monad.Logger
+
+logSourceKNX :: LogSource
+logSourceKNX = "KNX"
 
 eibOpenGroupcon = 0x26
 
 newtype KNXCallback = KNXCallback (IncomingMessage -> IO ())
 
-newtype KNXM a = KNXM { runKNXM :: ReaderT KNXConnection IO a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO)
+newtype KNXM a = KNXM { runKNXM :: ReaderT KNXConnection (LoggingT IO) a }
+  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadLogger)
 
-runKNX :: KNXConnection -> KNXM a -> IO a
+runKNX :: KNXConnection -> KNXM a -> (LoggingT IO) a
 runKNX knx = flip runReaderT knx . runKNXM
 
 data KNXConnection = KNXConnection
@@ -64,7 +71,7 @@ createTCPConnection host port = do
 
 runKnxLoop :: KNXCallback -> KNXM ()
 runKnxLoop cb = do
-    liftIO $ putStrLn "Starting KNX loop"
+    logInfoNS logSourceKNX . pack $ "Starting KNX loop"
     evalStateT (loop cb) LBS.empty
     where
         loop cb = do
@@ -72,7 +79,7 @@ runKnxLoop cb = do
             input <- liftIO $ LBS.fromStrict <$> recv (sock knx) 1024  -- liftIO should be used here
             if LBS.null input
                 then do
-                    liftIO $ putStrLn "Connection closed by the server"
+                    logErrorNS logSourceKNX . pack $ "Connection closed by the server"
                     return ()
                 else do
                     processInput input cb
@@ -86,17 +93,17 @@ processInput input cb = do
         msgLength = fromIntegral $ runGet getWord16be buffer'
         msg = LBS.drop 2 buffer'
 
-    newBuffer <- liftIO $ do
+    newBuffer <- do
         if (LBS.length msg) >= msgLength
             then do
                 let (telegramBytes, rest) = LBS.splitAt msgLength msg
                 case parseMessage telegramBytes of
-                    Left err -> putStrLn $ "Error parsing message: " ++ err
+                    Left err -> logWarnNS logSourceKNX . pack $ "Error parsing message: " ++ err
                     Right msg -> do
-                        putStrLn $ "Received message: " ++ show msg
+                        logDebugNS logSourceKNX . pack $ "Received message: " ++ show msg
 
                         let KNXCallback cb' = cb
-                        cb' msg
+                        liftIO $ cb' msg
                 return rest
             else return buffer'
     put newBuffer
@@ -141,31 +148,33 @@ composeMessage msg = runPut $ do
     putWord16be $ fromIntegral msgLength
     putLazyByteString msg
 
-connectKnx :: HostName -> ServiceName -> IO KNXConnection
+connectKnx :: HostName -> ServiceName -> (LoggingT IO) KNXConnection
 connectKnx host port = do
-    sock <- createTCPConnection host port
+    sock <- liftIO $ createTCPConnection host port
     -- send eibOpenGroupcon
     let message = composeMessage eibOpenGroupconMessage
-    _ <- send sock (LBS.toStrict message)
+    _ <- liftIO $ send sock (LBS.toStrict message)
+    logInfoNS logSourceKNX . pack $ "Connected to KNX gateway."
     return KNXConnection { host = host, port = port, sock = sock }
 
 disconnectKnx :: KNXM ()
 disconnectKnx = KNXM $ do
     knx <- ask
     liftIO $ close (sock knx)
+    logInfoNS logSourceKNX . pack $ "Disconnected from KNX gateway."
     return ()
 
 sendTelegram :: KNXTelegram -> KNXM ()
 sendTelegram telegram = KNXM $ do
     knx <- ask
     let msg = composeMessage $ B.encode telegram
-    -- putStrLn $ "Sending: " ++ hexWithSpaces msg
+    -- logDebugNS logSourceKNX . pack $ "Sending: " ++ hexWithSpaces msg
     _ <- liftIO $ send (sock knx) (LBS.toStrict msg)
     return ()
 
 groupWrite :: GroupValueWrite -> KNXM ()
 groupWrite (GroupValueWrite groupAddress dpt) = do
-    liftIO $ putStrLn $ "Writing " ++ show dpt ++ " to " ++ show groupAddress
+    logDebugNS logSourceKNX . pack $ "Writing " ++ show dpt ++ " to " ++ show groupAddress
     let telegram = KNXTelegram  { messageCode = 39
                                 , srcField = Nothing
                                 , dstField = groupAddress
@@ -179,7 +188,7 @@ groupWrite (GroupValueWrite groupAddress dpt) = do
 
 groupRead :: GroupValueRead -> KNXM ()
 groupRead (GroupValueRead groupAddress) = do
-    liftIO $ putStrLn $ "Reading from " ++ show groupAddress
+    logDebugNS logSourceKNX . pack $ "Reading from " ++ show groupAddress
     let telegram = KNXTelegram  { messageCode = 39
                                 , srcField = Nothing
                                 , dstField = groupAddress

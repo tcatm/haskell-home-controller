@@ -9,6 +9,8 @@ import Console
 import TimeSender
 import Control.Concurrent
 import Control.Concurrent.STM
+import Control.Monad.IO.Class
+import Control.Monad.Logger
 import qualified Data.Map as Map
 
 import StaircaseLight
@@ -21,39 +23,35 @@ knxCallback :: TQueue DeviceInput -> KNXCallback
 knxCallback queue = KNXCallback $ atomically <$> writeTQueue queue . KNXIncomingMessage
 
 -- Define a helper function to create a thread and return an MVar
-forkIOWithSync :: IO () -> IO (MVar ())
+forkIOWithSync :: LoggingT IO () -> LoggingT IO (MVar ())
 forkIOWithSync action = do
-  syncVar <- newEmptyMVar
-  forkIO $ action >> putMVar syncVar ()
-  return syncVar
+    logger <- askLoggerIO
+    syncVar <- liftIO newEmptyMVar
+    liftIO $ forkIO $ do
+        runLoggingT action logger
+        putMVar syncVar ()
+    return syncVar
 
 -- Define the main function to create and synchronize threads for a list of actions
-waitAllThreads :: [IO ()] -> IO ()
+waitAllThreads :: [LoggingT IO ()] -> LoggingT IO ()
 waitAllThreads actions = do
   syncVars <- mapM forkIOWithSync actions
-  sequence_ (map takeMVar syncVars)
+  liftIO $ mapM_ takeMVar syncVars
+
+logFilter :: LogSource -> LogLevel -> Bool
+logFilter logSourceKNX LevelDebug = False
+logFilter _ _ = True
 
 main :: IO ()
-main = do
+main = runStdoutLoggingT $ filterLogger logFilter $ do
   knx <- connectKnx knxGatewayHost knxGatewayPort
-  putStrLn "Connected to KNX gateway."
-
-  let timeSenderConfig = TimeSenderConfig {
-    timeGA = GroupAddress 0 0 1,
-    dateGA = GroupAddress 0 0 2,
-    intervalSeconds = 10
-  }
-
-  deviceInput <- newTQueueIO
-
-  -- all temperatures from 3 2 1 till 3 2 12
-  let temperatureGAs = map (\i -> GroupAddress 3 2 i) [1..12]
+  deviceInput <- liftIO $ newTQueueIO
 
   let devices = [ sampleDevice
                 --, timeSender timeSenderConfig
                 --, staircaseLight
                 , blindsDeviceKitchen
-                ] ++ map temperatureLogger temperatureGAs
+                ] ++ temperatureLoggers
 
   let actions = [ runKNX knx $ runKnxLoop (knxCallback deviceInput)
                 , stdinLoop knx
@@ -62,8 +60,14 @@ main = do
 
   waitAllThreads actions
 
-  runKNX knx $ disconnectKnx
-  putStrLn "Closed connection."
+timeSenderConfig = TimeSenderConfig
+                            { timeGA = GroupAddress 0 0 1
+                            , dateGA = GroupAddress 0 0 2
+                            , intervalSeconds = 10
+                            }
+
+temperatureGAs = map (\i -> GroupAddress 3 2 i) [1..12]
+temperatureLoggers = map temperatureLogger temperatureGAs
 
 -- | This device reads two group addresses and prints their sum after both have been read.
 -- | When a new value is read from either group address, the sum is recalculated.

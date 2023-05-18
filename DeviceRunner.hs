@@ -1,7 +1,10 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module DeviceRunner
     ( DeviceInput (..)
     , Continuation (..)
     , runDevices
+    , logSourceDeviceRunner
     ) where
 
 import KNX hiding (groupWrite, groupRead)
@@ -16,14 +19,19 @@ import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Trans.State
+import Control.Monad.Logger
 import Data.Binary.Get
 import Data.List
 import Data.Maybe
 import Data.Map (Map)
+import Data.Text (pack)
 import Data.Time.Clock
 import Data.Time.LocalTime
 import qualified Data.Map.Strict as Map
 import System.Console.Pretty
+
+logSourceDeviceRunner :: LogSource
+logSourceDeviceRunner = "DeviceRunner"
 
 data DeviceInput = StartDevice | KNXIncomingMessage IncomingMessage | TimerEvent TimerId UTCTime deriving (Show)
 
@@ -88,7 +96,8 @@ processDeviceInput input device = do
     if null matchingContinuations
         then return device
         else do
-            liftIO $ putStrLn $ color Blue $ "Processing " ++ show input ++ " for " ++ deviceName device
+            logInfoNS logSourceDeviceRunner . pack $ color Blue $ "Processing " ++ deviceName device ++ " with " ++ show matchingContinuations
+            logInfoNS logSourceDeviceRunner . pack $ color Green $ "    State: " ++ show state
 
             ((continuations', state'), timers) <- runStateT (foldM f ([], state) matchingContinuations) $ deviceTimers device
 
@@ -104,7 +113,8 @@ processDeviceInput input device = do
                                     , deviceTimers = timers
                                     }
 
-            liftIO $ putStrLn $ color Blue $ "Device: " ++ show device'
+            logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Final state: " ++ show state'
+            logInfoNS logSourceDeviceRunner . pack $ color Blue $ "    Continuations: " ++ show continuations'''
 
             return device'
 
@@ -126,22 +136,18 @@ handleKNX :: (Show s) => EncodedDPT -> s -> Continuation s -> TimerT ([Continuat
 handleKNX payload state c@(GroupValueContinuation _ parser device) = do
     case runGetOrFail parser (encodedDPT payload) of
         Left (_, _, err) -> do
-            liftIO $ putStrLn $ color Red $ "    Error parsing DPT: " ++ err
+            logWarnNS logSourceDeviceRunner . pack $ color Red $ "    Error parsing DPT: " ++ err
             return ([], state)
 
         Right (_, _, dpt) -> do
-            liftIO $ putStrLn $ color Green $ "    DPT: " ++ show dpt
+            logInfoNS logSourceDeviceRunner . pack $ color Green $ "    DPT: " ++ show dpt
 
             runDeviceWithEffects state c (device dpt)
 
 runDeviceWithEffects :: (Show s) => s -> Continuation s -> DeviceM s () -> TimerT ([Continuation s], s)
 runDeviceWithEffects state c device = do
     time <- liftIO $ getZonedTime
-    liftIO $ putStrLn $ color Green $ "    Performing " ++ show c
-
     let (_, state', actions) = runDeviceM device (time, state)
-
-    liftIO $ putStrLn $ color Green $ "    Final state: " ++ show state'
 
     continuations <- performDeviceActions actions
 
@@ -152,25 +158,25 @@ performDeviceActions actions = catMaybes <$> mapM performDeviceAction actions
 
 performDeviceAction :: Action s -> TimerT (Maybe (Continuation s))
 performDeviceAction (Log msg) = do
-    liftIO $ putStrLn $ color Yellow $ "    " ++ msg
+    logInfoNS logSourceDeviceRunner . pack $ color Yellow $ "    " ++ msg
     return Nothing
 
 performDeviceAction (GroupWrite ga dpt) = do
-    liftIO $ putStrLn $ color Magenta $ "    GroupValueWrite " ++ show dpt ++ " to " ++ show ga
+    logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueWrite " ++ show dpt ++ " to " ++ show ga
     lift $ lift $ KNX.groupWrite $ GroupValueWrite ga dpt
     return Nothing
 
 performDeviceAction (GroupRead ga) = do
-    liftIO $ putStrLn $ color Magenta $ "    GroupValueRead from " ++ show ga
+    logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueRead from " ++ show ga
     lift $ lift $ KNX.groupRead $ GroupValueRead ga
     return Nothing
 
 performDeviceAction (Defer continuation) = do
-    liftIO $ putStrLn $ color Magenta $ "    Deferring continuation: " ++ show continuation
+    logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    Deferring continuation: " ++ show continuation
 
     case continuation of
         StartContinuation device -> do
-            liftIO $ putStrLn $ color Red $ "    Ignored deferred StartContinuation"
+            logWarnNS logSourceDeviceRunner . pack $ color Red $ "    Ignored deferred StartContinuation"
             return Nothing
 
         GroupValueContinuation ga _ _ -> do
@@ -188,7 +194,7 @@ performDeviceAction (Defer continuation) = do
             return $ Just continuation
     
 performDeviceAction (CancelTimer timerId) = do
-    liftIO $ putStrLn $ color Red $ "    Canceling timer: " ++ show timerId
+    logInfoNS logSourceDeviceRunner . pack $ color Red $ "    Canceling timer: " ++ show timerId
 
     threadId <- gets $ Map.lookup timerId
     

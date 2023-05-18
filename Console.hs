@@ -9,21 +9,23 @@ import DPTs
 
 import System.IO
 import Control.Monad
+import Control.Monad.Logger
+import Control.Monad.IO.Class
 
-stdinLoop :: KNXConnection -> IO ()
+stdinLoop :: KNXConnection -> (LoggingT IO) ()
 stdinLoop knx = 
   forever $ do
-  line <- hGetLine stdin
-  putStrLn $ "Received from stdin: " ++ line
+  line <- liftIO $ hGetLine stdin
+  liftIO $ putStrLn $ "Received from stdin: " ++ line
   -- Parse "1/2/3 0 0 0 ..." to KNXAdress + List of integers
   let parts = words line
   case parseInput parts of
     Just (groupAddress, dpt) -> do
       -- Do something with the parsed values
-      putStrLn $ "Parsed: " ++ show groupAddress ++ " " ++ show dpt
+      liftIO $ putStrLn $ "Parsed: " ++ show groupAddress ++ " " ++ show dpt
       runKNX knx $ groupWrite $ GroupValueWrite groupAddress dpt
       return ()
-    Nothing -> putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
+    Nothing -> liftIO $ putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 
 -- Parse a String like: 0/1/2 DPT1 True
 parseInput :: [String] -> Maybe (GroupAddress, DPT)
