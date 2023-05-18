@@ -30,7 +30,7 @@ staircaseLight = makeDevice "StaircaseLight" initialLightState startDevice
 
 startDevice :: DeviceM LightState ()
 startDevice = do
-    eventLoop (groupValue lightOnAddress parseDPT1) handleLightSwitch
+    eventLoop (groupValue lightOnAddress getDPT1) handleLightSwitch
 
 handleLightSwitch :: DPT -> DeviceM LightState ()
 handleLightSwitch dpt = do

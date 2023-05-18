@@ -73,7 +73,7 @@ sampleDeviceF = do
     groupAddressA = GroupAddress 0 0 1
     groupAddressB = GroupAddress 0 0 2
 
-    readAndTry ga = eventLoop (groupValue ga parseDPT6) $ \(DPT6 a) -> do
+    readAndTry ga = eventLoop (groupValue ga getDPT6) $ \(DPT6 a) -> do
         debug $ "Read " ++ show a ++ " from " ++ show ga
         modify $ Map.insert ga $ fromIntegral a
         tryBoth
@@ -91,5 +91,5 @@ sceneMultiplexer inputGA offset ouputGA = makeDevice "Scene Multiplexer" () $ sc
 
 sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM () ()
 sceneMultiplexerF inputAddr offset outputAddr = do
-    eventLoop (groupValue inputAddr parseDPT18_1) $ \(DPT18_1 (False, a)) -> do
+    eventLoop (groupValue inputAddr getDPT18_1) $ \(DPT18_1 (False, a)) -> do
         groupWrite outputAddr (DPT18_1 (False, a + offset))

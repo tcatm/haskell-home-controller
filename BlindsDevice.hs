@@ -26,7 +26,7 @@ data BlindsConfig = BlindsConfig
 data BlindState = Idle | MovingUp | MovingDown deriving (Show)
 
 data BlindsState = BlindsState
-    { position :: Word8
+    { position :: Double
     , blindState :: BlindState
     , lastMove :: Maybe UTCTime
     , timerId :: Maybe TimerId
@@ -44,9 +44,9 @@ makeBlindsDevice name config = makeDevice name initialBlindsState $ blindsDevice
 
 blindsDeviceF :: BlindsConfig -> DeviceM BlindsState ()
 blindsDeviceF config = do
-    eventLoop (groupValue (upDownGA config) parseDPT1) upDownHandler
-    eventLoop (groupValue (stopGA config) parseDPT1) stopHandler
-    eventLoop (groupValue (positionGA config) parseDPT5) positionHandler
+    eventLoop (groupValue (upDownGA config) getDPT1) upDownHandler
+    eventLoop (groupValue (stopGA config) getDPT1) stopHandler
+    eventLoop (groupValue (positionGA config) getDPT5_1) positionHandler
 
     where
         upDownHandler (DPT1 False) = do
@@ -55,20 +55,20 @@ blindsDeviceF config = do
 
         upDownHandler (DPT1 True) = do
             debug "Received down command"
-            moveTo 255 True
+            moveTo 1 True
 
         stopHandler (DPT1 _) = do
             debug "Received stop command"
             changeState Idle
 
-        positionHandler (DPT5 pos) = do
+        positionHandler (DPT5_1 pos) = do
             debug $ "Received position " ++ show pos
             moveTo pos False
 
         setBlindState :: BlindState -> DeviceM BlindsState ()
         setBlindState newState = modify $ \s -> s { blindState = newState }
 
-        setPosition :: Word8 -> DeviceM BlindsState ()
+        setPosition :: Double -> DeviceM BlindsState ()
         setPosition newPos = modify $ \s -> s { position = newPos }
 
         setLastMove :: Maybe UTCTime -> DeviceM BlindsState ()
@@ -103,13 +103,13 @@ blindsDeviceF config = do
                     setLastMove Nothing
                 _ -> return ()
 
-        calcPosition :: NominalDiffTime -> NominalDiffTime -> Word8
-        calcPosition timeToMove time = round $ (time / timeToMove) * 255
+        calcPosition :: NominalDiffTime -> NominalDiffTime -> Double
+        calcPosition timeToMove time = realToFrac (time / timeToMove)
 
-        remaingTimeF :: Integer -> NominalDiffTime -> NominalDiffTime
-        remaingTimeF pos timeToMove = (fromIntegral pos / 255) * timeToMove
+        remainingTimeF :: Double -> NominalDiffTime -> NominalDiffTime
+        remainingTimeF pos timeToMove = realToFrac (pos * (realToFrac timeToMove))
 
-        moveTo :: Word8 -> Bool -> DeviceM BlindsState ()
+        moveTo :: Double -> Bool -> DeviceM BlindsState ()
         moveTo pos fullmove = do
             debug $ "Moving to " ++ show pos
 
@@ -122,16 +122,16 @@ blindsDeviceF config = do
                         moveTo' pos fullmove
                     return ()
 
-        moveTo' :: Word8 -> Bool -> DeviceM BlindsState ()
+        moveTo' :: Double -> Bool -> DeviceM BlindsState ()
         moveTo' pos fullmove = do
             position' <- gets position
             let direction = if pos > position' then MovingDown else MovingUp
-            let delta = abs $ (fromIntegral pos :: Integer) - (fromIntegral position' :: Integer)
+            let delta = abs $ pos - position'
 
             let timeToMove' = timeToMove config
             let remainingTime = case fullmove of
                                     True -> timeToMove' + motorStartDelay config
-                                    False -> (remaingTimeF delta timeToMove') + motorStartDelay config
+                                    False -> (remainingTimeF delta timeToMove') + motorStartDelay config
 
             debug $ "position': " ++ show position' ++ ", direction: " ++ show direction
 
@@ -177,5 +177,5 @@ blindsDeviceF config = do
                         Idle -> oldPosition
 
                 debug $ "New position: " ++ show newPosition
-                groupWrite (positionStateGA config) (DPT5 newPosition)
+                groupWrite (positionStateGA config) (DPT5_1 newPosition)
                 setPosition newPosition

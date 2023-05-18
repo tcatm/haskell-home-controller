@@ -2,13 +2,14 @@ module DPTs
     ( DPT (..)
     , EncodedDPT (..)
     , encodeDPT
-    , parseDPT1
-    , parseDPT2
-    , parseDPT3
-    , parseDPT5
-    , parseDPT6
-    , parseDPT9
-    , parseDPT18_1
+    , getDPT1
+    , getDPT2
+    , getDPT3
+    , getDPT5
+    , getDPT5_1
+    , getDPT6
+    , getDPT9
+    , getDPT18_1
     ) where
 
 import Data.Binary
@@ -29,6 +30,7 @@ data DPT = DPT1 Bool -- short
          | DPT3 Int -- 4bit, short
          | DPT4 Char
          | DPT5 Word8
+         | DPT5_1 Double
          | DPT6 Int8
          | DPT7 Word16
          | DPT8 Int16
@@ -61,6 +63,7 @@ encodeDPT dpt =
                                 in (putWord8 $ signBit .|. dataBits, True)
                             DPT4 v -> (putWord8 $ fromIntegral $ fromEnum v, False)
                             DPT5 v -> (putWord8 v, False)
+                            DPT5_1 v -> (putWord8 $ fromIntegral $ round (v * 255), False)
                             DPT6 v -> (putWord8 $ fromIntegral v, False)
                             DPT7 v -> (putWord16be v, False)
                             DPT8 v -> (putWord16be $ fromIntegral v, False)
@@ -83,29 +86,32 @@ encodeDPT dpt =
                                 , False)
     in EncodedDPT (runPut result) bool
 
-parseDPT1 :: Get DPT
-parseDPT1 = DPT1 . (/= 0) <$> getWord8
+getDPT1 :: Get DPT
+getDPT1 = DPT1 . (/= 0) <$> getWord8
 
-parseDPT2 :: Get DPT
-parseDPT2 = (\v -> DPT2 ((v .&. 0x02 /= 0), (v .&. 0x01 /= 0))) <$> getWord8
+getDPT2 :: Get DPT
+getDPT2 = (\v -> DPT2 ((v .&. 0x02 /= 0), (v .&. 0x01 /= 0))) <$> getWord8
 
-parseDPT3 :: Get DPT
-parseDPT3 = (\v -> DPT3 $ fromIntegral ((v .&. 0x08 `shiftR` 4) .|. (v .&. 0x07))) <$> getWord8
+getDPT3 :: Get DPT
+getDPT3 = (\v -> DPT3 $ fromIntegral ((v .&. 0x08 `shiftR` 4) .|. (v .&. 0x07))) <$> getWord8
 
-parseDPT5 :: Get DPT
-parseDPT5 = DPT5 <$> getWord8
+getDPT5 :: Get DPT
+getDPT5 = DPT5 <$> getWord8
 
-parseDPT6 :: Get DPT
-parseDPT6 = DPT6 . fromIntegral <$> getInt8
+getDPT5_1 :: Get DPT
+getDPT5_1 = DPT5_1 . (/ 255) . fromIntegral <$> getWord8
 
-parseDPT9 :: Get DPT
-parseDPT9 = DPT9 <$> getKNXFloat16
+getDPT6 :: Get DPT
+getDPT6 = DPT6 . fromIntegral <$> getInt8
 
-parseDPT10 :: Get DPT
-parseDPT10 = DPT10 <$> get
+getDPT9 :: Get DPT
+getDPT9 = DPT9 <$> getKNXFloat16
 
-parseDPT11 :: Get DPT
-parseDPT11 = do
+getDPT10 :: Get DPT
+getDPT10 = DPT10 <$> get
+
+getDPT11 :: Get DPT
+getDPT11 = do
     a <- getWord8
     b <- getWord8
     c <- getWord8
@@ -113,5 +119,5 @@ parseDPT11 = do
     let interpretedYear = if year >= 90 then 1900 + year else 2000 + year
     return $ DPT11 $ fromGregorian (fromIntegral interpretedYear) (fromIntegral b) (fromIntegral a)
 
-parseDPT18_1 :: Get DPT
-parseDPT18_1 = (\v -> DPT18_1 ((v .&. 0x80 /= 0), fromIntegral $ v .&. 0x7F)) <$> getWord8
+getDPT18_1 :: Get DPT
+getDPT18_1 = (\v -> DPT18_1 ((v .&. 0x80 /= 0), fromIntegral $ v .&. 0x7F)) <$> getWord8

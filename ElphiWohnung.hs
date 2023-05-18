@@ -49,23 +49,23 @@ presenceDevice = makeDevice "Anwesenheit" () presenceDeviceF
 presenceDeviceF :: DeviceM () ()
 presenceDeviceF = do
     let presenceGA = GroupAddress 0 1 12
-    eventLoop (groupValue presenceGA parseDPT1) $ \(DPT1 presence) -> do
+    eventLoop (groupValue presenceGA getDPT1) $ \(DPT1 presence) -> do
         debug $ "Presence: " ++ show presence
         case presence of
             True -> enablePresence
             False -> disablePresence
 
 enablePresence = do
-    groupWrite (GroupAddress 1 0 1) (DPT1 True) -- Rückmeldung Anwesenheit
-    groupWrite (GroupAddress 1 3 1) (DPT5 180)  -- Bel. Decke Flur 1.1 auf 70%
-    groupWrite (GroupAddress 3 4 90) (DPT5 1)   -- Betriebsmodus Wohnung (HVAC) auf Komfort
-    groupWrite (GroupAddress 3 0 5) (DPT5 102)  -- Volumenstrom auf 40%
+    groupWrite (GroupAddress 1 0 1) (DPT1 True)     -- Rückmeldung Anwesenheit
+    groupWrite (GroupAddress 1 3 1) (DPT5_1 0.7)    -- Bel. Decke Flur 1.1 auf 70%
+    groupWrite (GroupAddress 3 4 90) (DPT5 1)       -- Betriebsmodus Wohnung (HVAC) auf Komfort
+    groupWrite (GroupAddress 3 0 5) (DPT5_1 0.4)    -- Volumenstrom auf 40%
     -- TODO Timer für HVAC abbrechen
 
 disablePresence = do
     groupWrite (GroupAddress 1 0 1) (DPT1 False)            -- Rückmeldung Anwesenheit
     groupWrite (GroupAddress 0 1 1) (DPT18_1 (False, 0))    -- Szene Aus für ganze Wohnung
-    groupWrite (GroupAddress 3 0 5) (DPT5 0)                -- Volumenstrom auf 0%
+    groupWrite (GroupAddress 3 0 5) (DPT5_1 0)              -- Volumenstrom auf 0%
     groupWrite (GroupAddress 1 1 27) (DPT1 False)           -- Steckdose Bett links Master Bedroom aus
     groupWrite (GroupAddress 1 1 28) (DPT1 False)           -- Steckdose Bett rechts Master Bedroom aus
     groupWrite (GroupAddress 1 1 29) (DPT1 False)           -- Handtuch Heizung Masterbad
@@ -90,7 +90,7 @@ meanTemperatureDevice :: [GroupAddress] -> GroupAddress -> DeviceM (Map.Map Grou
 meanTemperatureDevice addresses output = do
     forM_ addresses $ \address -> do
         groupRead address
-        eventLoop (groupValue address parseDPT9) $ \(DPT9 temp) -> do
+        eventLoop (groupValue address getDPT9) $ \(DPT9 temp) -> do
             debug $ "Read " ++ show temp ++ " from " ++ show address
             modify $ Map.insert address temp
             tryAll
@@ -113,7 +113,7 @@ switchSceneAddresses = map (\i -> (GroupAddress 0 5 i, GroupAddress 0 1 i)) [1..
 switchSceneF :: [(GroupAddress, GroupAddress)] -> DeviceM () ()
 switchSceneF addresses = do
     forM_ addresses $ \(input, output) -> do
-        eventLoop (groupValue input parseDPT1) $ \(DPT1 state) -> do
+        eventLoop (groupValue input getDPT1) $ \(DPT1 state) -> do
             debug $ "Read " ++ show state ++ " from " ++ show input
             let scene = if state then 1 else 0
             groupWrite output (DPT18_1 (False, scene))
@@ -149,7 +149,7 @@ allRoomsLightStateF roomLightStateMap outputAllRooms = do
     forM_ roomLightStateMap $ \roomLightState -> do
         forM_ (lightStateGAs roomLightState) $ \ga -> do
             groupRead ga
-            eventLoop (groupValue ga parseDPT1) $ \(DPT1 state) -> do
+            eventLoop (groupValue ga getDPT1) $ \(DPT1 state) -> do
                 debug $ "Read " ++ show state ++ " from " ++ show ga
                 states <- gets $ Map.lookup (roomName roomLightState)
 
