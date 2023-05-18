@@ -10,6 +10,8 @@ packages = \
 	-package aeson \
 	-package yesod \
 	-package split \
+	-package mtl \
+	-package aeson \
 	-package stm
 
 sources = \
