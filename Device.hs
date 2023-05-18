@@ -38,6 +38,7 @@ import Data.Time.Clock
 import Data.Time.LocalTime
 import Data.Hashable
 import Data.Map (Map)
+import Data.Aeson
 import Control.Concurrent
 
 data Device = forall s. Show s => Device (Device' s)
@@ -49,6 +50,9 @@ data Device' s = Device'    { deviceName :: String
                             } deriving (Show)
 
 newtype TimerId = TimerId Int deriving (Eq, Ord, Show)
+
+instance ToJSON TimerId where
+    toJSON (TimerId i) = toJSON i
 
 data Continuation s = StartContinuation (DeviceM s ())
                     | GroupValueContinuation GroupAddress (Get DPT) (DPT -> DeviceM s ())

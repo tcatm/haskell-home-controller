@@ -6,6 +6,8 @@ packages = \
 	-package conduit \
 	-package async \
 	-package conduit-extra \
+	-package mtl \
+	-package aeson \
 	-package stm
 
 sources = \

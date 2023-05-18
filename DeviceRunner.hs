@@ -28,6 +28,10 @@ import Data.Time.Clock
 import Data.Time.LocalTime
 import qualified Data.Map.Strict as Map
 import System.Console.Pretty
+import Control.Monad.Writer.Lazy
+import Data.Aeson
+import Data.Text.Lazy.Encoding (decodeUtf8)
+import Data.Text.Lazy (unpack)
 
 logSourceDeviceRunner :: LogSource
 logSourceDeviceRunner = "DeviceRunner"
@@ -38,7 +42,8 @@ data DeviceInput    = StartDevice
                     deriving (Show)
 
 type DeviceRunnerT = ReaderT DeviceRunnerContext (LoggingT IO)
-type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
+type WriterDeviceRunnerT = WriterT [Value] DeviceRunnerT
+type TimerT = StateT (Map TimerId ThreadId) WriterDeviceRunnerT
 
 data DeviceRunnerContext = DeviceRunnerContext
     { deviceRunnerInputChan :: TChan DeviceInput
@@ -67,12 +72,9 @@ deviceRunner devices = do
     loop devices'        
 
 mapDevices :: DeviceInput -> [Device] -> DeviceRunnerT [Device]
-mapDevices input devices = do 
-    devices' <- mapM (\(Device d) -> Device <$> processDeviceInput input d) devices
-
-    -- debugDevices devices'
-
-    return devices'
+mapDevices input = mapM (uncurry f) . zip [0..]
+    where
+        f deviceId (Device d) = Device <$> processDevice deviceId input d
 
 debugDevices :: [Device] -> DeviceRunnerT ()
 debugDevices devices = liftIO $ do
@@ -81,6 +83,20 @@ debugDevices devices = liftIO $ do
         putStrLn $ color Green $ "    " <> deviceName d
         putStrLn $ color Green $ "        Continuations: " <> show (deviceContinuations d)
         ) devices
+
+processDevice :: (Show s) => Int -> DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
+processDevice deviceId input device = do
+    (device', log) <- runWriterT $ processDeviceInput input device
+
+    handleLog deviceId (deviceName device) log
+
+    return device'
+
+handleLog :: Int -> String -> [Value] -> DeviceRunnerT ()
+handleLog deviceId deviceName log = do
+    unless (null log) $ do
+        let log' = object [ "deviceId" .= deviceId, "deviceName" .= deviceName, "log" .= log ]
+        logInfoNS logSourceDeviceRunner . pack . unpack . decodeUtf8 . encode $ log'
 
 filterF :: DeviceInput -> Continuation s -> Bool
 filterF input c = case input of
@@ -110,7 +126,7 @@ filterKNXMessage (IncomingGroupValueRead ga) c =
         GroupReadContinuation ga' _ -> ga' == ga
         _ -> False
 
-processDeviceInput :: (Show s) => DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
+processDeviceInput :: (Show s) => DeviceInput -> Device' s -> WriterDeviceRunnerT (Device' s)
 processDeviceInput input device = do
     let continuations = deviceContinuations device
     let state = deviceState device
@@ -153,6 +169,8 @@ performContinuation _ state c@(StartContinuation device) =
     runDeviceWithEffects state c device
 
 performContinuation (TimerEvent timerId _) state c@(ScheduledContinuation _ _ device) = do
+    let TimerId x = timerId
+    tell [ object [ "type" .= ("TimerEvent" :: String) , "timerId" .= x ] ]
     modify $ Map.delete timerId
     runDeviceWithEffects state c device
 
@@ -173,7 +191,7 @@ handleKNXValue payload state c@(GroupValueContinuation ga parser device) = do
 
         Right (_, _, dpt) -> do
             logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Received " <> show dpt <> " at " <> show ga
-
+            tell [ object [ "type" .= ("KNXIn" :: String) , "ga" .= show ga , "dpt" .= show dpt ] ]
             runDeviceWithEffects state c (device dpt)
 
 handleKNXread :: (Show s) => s -> Continuation s -> TimerT ([Continuation s], s)
@@ -200,21 +218,23 @@ performDeviceActions actions = catMaybes <$> mapM performDeviceAction actions
 performDeviceAction :: Action s -> TimerT (Maybe (Continuation s))
 performDeviceAction (Log msg) = do
     logInfoNS logSourceDeviceRunner . pack $ color Yellow $ "    " <> msg
+    tell [ object [ "type" .= ("Log" :: String) , "message" .= msg ] ]
     return Nothing
 
 performDeviceAction (GroupWrite ga dpt) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueWrite " <> show dpt <> " to " <> show ga
-    lift $ sendKNXMessage $ GroupValueWrite ga dpt
+    tell [ object [ "type" .= ("KNXOut" :: String) , "ga" .= show ga , "dpt" .= show dpt ] ]
+    lift . lift $ sendKNXMessage $ GroupValueWrite ga dpt
     return Nothing
 
 performDeviceAction (GroupResponse ga dpt) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueResponse " <> show dpt <> " to " <> show ga
-    lift $ sendKNXMessage $ GroupValueResponse ga dpt
+    lift . lift $ sendKNXMessage $ GroupValueResponse ga dpt
     return Nothing
 
 performDeviceAction (GroupRead ga) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueRead from " <> show ga
-    lift $ sendKNXMessage $ GroupValueRead ga
+    lift . lift $ sendKNXMessage $ GroupValueRead ga
     return Nothing
 
 performDeviceAction (Defer continuation) = do
@@ -226,24 +246,28 @@ performDeviceAction (Defer continuation) = do
             return Nothing
 
         GroupValueContinuation ga _ _ -> do
+            tell [ object [ "type" .= ("KNXListen" :: String) , "ga" .= show ga ] ]
             return $ Just continuation
 
         GroupReadContinuation ga _ -> do
             return $ Just continuation
 
         ScheduledContinuation timerId time device -> do
-            inputChan <- lift $ asks deviceRunnerInputChan
+            inputChan <- lift . lift $ asks deviceRunnerInputChan
             threadId <- liftIO $ forkIO $ do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
                 threadDelay $ ceiling $ 1000000 * delay
                 atomically $ writeTChan inputChan $ TimerEvent timerId time
 
+            tell [ object [ "type" .= ("SetTimer" :: String) , "timerId" .= timerId, "time" .= show time ] ]
+
             modify $ Map.insert timerId threadId
             return $ Just continuation
     
 performDeviceAction (CancelTimer timerId) = do
-    logInfoNS logSourceDeviceRunner . pack $ color Red $ "    Canceling timer: " <> show timerId
+    tell [ object [ "type" .= ("CancelTimer" :: String) , "timerId" .= timerId ] ]
+    logInfoNS logSourceDeviceRunner . pack $ color Red $ "    Canceling timer: " ++ show timerId
 
     threadId <- gets $ Map.lookup timerId
     
