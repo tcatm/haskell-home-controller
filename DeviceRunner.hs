@@ -147,6 +147,9 @@ handleKNX payload state c@(GroupValueContinuation _ parser device) = do
 runDeviceWithEffects :: (Show s) => s -> Continuation s -> DeviceM s () -> TimerT ([Continuation s], s)
 runDeviceWithEffects state c device = do
     time <- liftIO $ getZonedTime
+
+    logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Time: " ++ show time
+
     let (_, state', actions) = runDeviceM device (time, state)
 
     continuations <- performDeviceActions actions
