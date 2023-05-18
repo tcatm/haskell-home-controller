@@ -44,9 +44,9 @@ makeBlindsDevice name config = makeDevice name initialBlindsState $ blindsDevice
 
 blindsDeviceF :: BlindsConfig -> DeviceM BlindsState ()
 blindsDeviceF config = do
-    eventLoop (groupRead (upDownGA config) parseDPT1) upDownHandler
-    eventLoop (groupRead (stopGA config) parseDPT1) stopHandler
-    eventLoop (groupRead (positionGA config) parseDPT5) positionHandler
+    eventLoop (groupValue (upDownGA config) parseDPT1) upDownHandler
+    eventLoop (groupValue (stopGA config) parseDPT1) stopHandler
+    eventLoop (groupValue (positionGA config) parseDPT5) positionHandler
 
     where
         upDownHandler (DPT1 False) = do

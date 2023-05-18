@@ -1,5 +1,5 @@
-module Telegram
-    ( Telegram (..)
+module KNXTelegram
+    ( KNXTelegram (..)
     ) where
 
 import APDU
@@ -10,7 +10,7 @@ import Data.Binary.Get
 import Data.Binary.Put
 import qualified Data.ByteString.Lazy as LBS
 
-data Telegram = Telegram
+data KNXTelegram = KNXTelegram
     { messageCode :: Word8
     , srcField :: Maybe KNXAddress
     , dstField :: GroupAddress
@@ -19,18 +19,18 @@ data Telegram = Telegram
 
 -- Binary encoding is asymmetric.
 -- The srcField is not encoded in the telegram. KNXD will fill it in for us.
-instance Binary Telegram where
+instance Binary KNXTelegram where
     get = do
         _ <- getWord8
         messageCode <- getWord8
         src <- fmap parseKNXAddress $ getWord16be
         dst <- fmap parseGroupAddress $ getWord16be
         apdu <- decode <$> getRemainingLazyByteString
-        return Telegram { messageCode = messageCode
-                        , srcField = Just src
-                        , dstField = dst
-                        , apdu = apdu
-                        }
+        return KNXTelegram  { messageCode = messageCode
+                            , srcField = Just src
+                            , dstField = dst
+                            , apdu = apdu
+                            }
     put telegram = do
         putWord8 0x00
         putWord8 $ messageCode telegram

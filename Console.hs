@@ -4,6 +4,7 @@ module Console
 
 import KNX
 import KNXAddress
+import KNXMessages
 import DPTs
 
 import System.IO
@@ -20,7 +21,7 @@ stdinLoop knx =
     Just (groupAddress, dpt) -> do
       -- Do something with the parsed values
       putStrLn $ "Parsed: " ++ show groupAddress ++ " " ++ show dpt
-      runKNX knx $ groupWrite $ GroupMessage groupAddress dpt
+      runKNX knx $ groupWrite $ GroupValueWrite groupAddress dpt
       return ()
     Nothing -> putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 

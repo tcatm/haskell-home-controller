@@ -15,6 +15,7 @@ module Device
     , debug
     , groupWrite
     , groupRead
+    , groupValue
     , scheduleAt
     , scheduleIn
     , cancelTimer
@@ -42,21 +43,23 @@ data Device' s = Device'    { deviceName :: String
 newtype TimerId = TimerId Int deriving (Eq, Ord, Show)
 
 data Continuation s = StartContinuation (DeviceM s ())
-                    | GroupReadContinuation GroupAddress (Get DPT) (DPT -> DeviceM s ())
+                    | GroupValueContinuation GroupAddress (Get DPT) (DPT -> DeviceM s ())
                     | ScheduledContinuation TimerId UTCTime (DeviceM s ())
 
 instance Show (Continuation s) where
     show (StartContinuation _) = "StartContinuation"
-    show (GroupReadContinuation ga _ _) = "GroupReadContinuation " ++ show ga
+    show (GroupValueContinuation ga _ _) = "GroupValueContinuation " ++ show ga
     show (ScheduledContinuation timerId time _) = "ScheduledContinuation " ++ show timerId ++ " " ++ show time
 
 data Action s   = GroupWrite GroupAddress DPT
+                | GroupRead GroupAddress
                 | Defer (Continuation s)
                 | Log String
                 | CancelTimer TimerId
 
 instance Show (Action s) where
     show (GroupWrite ga dpt) = "GroupWrite " ++ show ga ++ " " ++ show dpt
+    show (GroupRead ga) = "GroupRead " ++ show ga
     show (Defer c) = "Defer " ++ show c
     show (Log msg) = "Log " ++ msg
     show (CancelTimer timerId) = "CancelTimer " ++ show timerId
@@ -108,23 +111,35 @@ groupWrite ga dpt = DeviceM $ \(time, s) -> ((), s, [action])
     where
         action = GroupWrite ga dpt
 
-groupRead :: GroupAddress -> (Get DPT) -> (DPT -> DeviceM s ()) -> DeviceM s ()
-groupRead ga parser cont = DeviceM $ \(time, s) -> ((), s, [Defer $ GroupReadContinuation ga parser cont])
+action :: Action s -> DeviceM s ()
+action a = DeviceM $ \(time, s) -> ((), s, [a])
 
+-- | Wait for a group value to be received. The parser is used to parse the value from the bus.
+groupValue :: GroupAddress -> (Get DPT) -> (DPT -> DeviceM s ()) -> DeviceM s ()
+groupValue ga parser cont = action $ Defer $ GroupValueContinuation ga parser cont
+
+-- | Trigger a group read. Use before groupValue to request a value from the bus instead of waiting for it to be sent.
+groupRead :: GroupAddress -> DeviceM s ()
+groupRead ga = action $ GroupRead ga
+
+-- | Schedule an action to be run at a specific time.
 scheduleAt :: UTCTime -> DeviceM s () -> DeviceM s (TimerId)
 scheduleAt time device = DeviceM $ \(_, s) -> (timerId, s, [action])
     where
         action = Defer $ ScheduledContinuation timerId time device
         timerId = TimerId $ hash (show time ++ show device)
 
+-- | Schedule an action to be run after a duration given in seconds.
 scheduleIn :: NominalDiffTime -> DeviceM s () -> DeviceM s (TimerId)
 scheduleIn offset device = do
     now <- getTime
     scheduleAt (addUTCTime offset $ zonedTimeToUTC now) device
 
+-- | Cancel a scheduled action.
 cancelTimer :: TimerId -> DeviceM s ()
 cancelTimer timerId = DeviceM $ \(time, s) -> ((), s, [CancelTimer timerId])
 
+-- | Get the current time.
 getTime :: DeviceM s ZonedTime
 getTime = DeviceM $ \(time, s) -> (time, s, [])
 

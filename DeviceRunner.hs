@@ -4,7 +4,8 @@ module DeviceRunner
     , runDevices
     ) where
 
-import KNX hiding (groupWrite)
+import KNX hiding (groupWrite, groupRead)
+import KNXMessages
 import qualified KNX as KNX
 import DPTs
 import Device hiding (gets, modify)
@@ -24,7 +25,7 @@ import Data.Time.LocalTime
 import qualified Data.Map.Strict as Map
 import System.Console.Pretty
 
-data DeviceInput = StartDevice | KNXGroupMessage IncomingGroupMessage | TimerEvent TimerId UTCTime deriving (Show)
+data DeviceInput = StartDevice | KNXIncomingMessage IncomingMessage | TimerEvent TimerId UTCTime deriving (Show)
 
 type DeviceRunnerT = ReaderT (TQueue DeviceInput) KNXM
 type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
@@ -48,27 +49,37 @@ deviceRunner devices = do
 mapDevices :: DeviceInput -> [Device] -> DeviceRunnerT [Device]
 mapDevices input = mapM (\(Device d) -> Device <$> processDeviceInput input d)
 
+filterF :: DeviceInput -> Continuation s -> Bool
+filterF input c = case input of
+                    StartDevice -> 
+                        case c of
+                            StartContinuation _ -> True
+                            _ -> False
+                    KNXIncomingMessage msg -> filterKNXMessage msg c
+                    TimerEvent timerId time -> 
+                        case c of
+                            ScheduledContinuation tId _ _ -> tId == timerId
+                            _ -> False
+
+filterKNXMessage :: IncomingMessage -> Continuation s -> Bool
+filterKNXMessage (IncomingWrite msg) c = 
+    case c of
+        GroupValueContinuation ga _ _ -> ga == incomingGA msg
+        _ -> False
+
+filterKNXMessage (IncomingResponse msg) c =
+    case c of
+        GroupValueContinuation ga _ _ -> ga == incomingGA msg
+        _ -> False
+
+filterKNXMessage _ _ = False
+
 processDeviceInput :: (Show s) => DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
 processDeviceInput input device = do
     let continuations = deviceContinuations device
     let state = deviceState device
 
-    let filterF = case input of
-                        StartDevice -> 
-                            \c -> case c of
-                                StartContinuation _ -> True
-                                _ -> False
-                        KNXGroupMessage msg -> 
-                            let groupAddress = incomingGroupAddress msg in
-                            \c -> case c of
-                                GroupReadContinuation ga _ _ -> ga == groupAddress
-                                _  -> False
-                        TimerEvent timerId time -> 
-                            \c -> case c of
-                                ScheduledContinuation tId _ _ -> tId == timerId
-                                _ -> False
-
-    let (matchingContinuations, otherContinuations) = partition filterF continuations
+    let (matchingContinuations, otherContinuations) = partition (filterF input) continuations
 
     let f (continuations, state) continuation = do
             (continuations', state') <- performContinuation input state continuation 
@@ -98,11 +109,7 @@ processDeviceInput input device = do
             return device'
 
 performContinuation :: (Show s) => DeviceInput -> s -> Continuation s -> TimerT ([Continuation s], s)
-performContinuation (KNXGroupMessage msg) state c@(GroupReadContinuation ga parser cont) = do
-    let dpt = runGet parser (encodedDPT $ payload msg)
-    liftIO $ putStrLn $ color Green $ "    DPT: " ++ show dpt
-
-    runDeviceWithEffects state c (cont dpt)
+performContinuation (KNXIncomingMessage msg) s c = performContinuationKNX msg s c
     
 performContinuation _ state c@(StartContinuation device) =
     runDeviceWithEffects state c device
@@ -110,6 +117,22 @@ performContinuation _ state c@(StartContinuation device) =
 performContinuation (TimerEvent timerId _) state c@(ScheduledContinuation _ _ device) = do
     modify $ Map.delete timerId
     runDeviceWithEffects state c device
+
+performContinuationKNX :: (Show s) => IncomingMessage -> s -> Continuation s -> TimerT ([Continuation s], s)
+performContinuationKNX (IncomingWrite msg) = handleKNX (igvwPayload msg)
+performContinuationKNX (IncomingResponse msg) = handleKNX (igvrPayload msg)
+
+handleKNX :: (Show s) => EncodedDPT -> s -> Continuation s -> TimerT ([Continuation s], s)
+handleKNX payload state c@(GroupValueContinuation _ parser device) = do
+    case runGetOrFail parser (encodedDPT payload) of
+        Left (_, _, err) -> do
+            liftIO $ putStrLn $ color Red $ "    Error parsing DPT: " ++ err
+            return ([], state)
+
+        Right (_, _, dpt) -> do
+            liftIO $ putStrLn $ color Green $ "    DPT: " ++ show dpt
+
+            runDeviceWithEffects state c (device dpt)
 
 runDeviceWithEffects :: (Show s) => s -> Continuation s -> DeviceM s () -> TimerT ([Continuation s], s)
 runDeviceWithEffects state c device = do
@@ -133,8 +156,13 @@ performDeviceAction (Log msg) = do
     return Nothing
 
 performDeviceAction (GroupWrite ga dpt) = do
-    liftIO $ putStrLn $ color Magenta $ "    GroupMessage " ++ show dpt ++ " to " ++ show ga
-    lift $ lift $ KNX.groupWrite $ GroupMessage ga dpt
+    liftIO $ putStrLn $ color Magenta $ "    GroupValueWrite " ++ show dpt ++ " to " ++ show ga
+    lift $ lift $ KNX.groupWrite $ GroupValueWrite ga dpt
+    return Nothing
+
+performDeviceAction (GroupRead ga) = do
+    liftIO $ putStrLn $ color Magenta $ "    GroupValueRead from " ++ show ga
+    lift $ lift $ KNX.groupRead $ GroupValueRead ga
     return Nothing
 
 performDeviceAction (Defer continuation) = do
@@ -145,8 +173,7 @@ performDeviceAction (Defer continuation) = do
             liftIO $ putStrLn $ color Red $ "    Ignored deferred StartContinuation"
             return Nothing
 
-        GroupReadContinuation ga _ _ -> do
-            -- TODO: Maybe trigger a group read on KNX?
+        GroupValueContinuation ga _ _ -> do
             return $ Just continuation
 
         ScheduledContinuation timerId time device -> do
