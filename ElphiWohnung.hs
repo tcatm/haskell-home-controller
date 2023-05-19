@@ -4,6 +4,7 @@ module ElphiWohnung
 where
 
 import KNXAddress
+import KNXDatatypes
 import DPTs
 import Device
 
@@ -58,7 +59,7 @@ presenceDeviceF = do
 enablePresence = do
     groupWrite (GroupAddress 1 0 1) (DPT1 True)     -- Rückmeldung Anwesenheit
     groupWrite (GroupAddress 1 3 1) (DPT5_1 0.7)    -- Bel. Decke Flur 1.1 auf 70%
-    groupWrite (GroupAddress 3 4 90) (DPT5 1)       -- Betriebsmodus Wohnung (HVAC) auf Komfort
+    groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeAuto)    -- Betriebsmodus Wohnung (HVAC) auf Auto
     groupWrite (GroupAddress 3 0 5) (DPT5_1 0.4)    -- Volumenstrom auf 40%
     
     timerId <- gets id
@@ -82,7 +83,7 @@ disablePresence = do
    
     let timerDelay = 3 * 24 * 60 * 60
     timerId <- scheduleIn timerDelay $ do
-        groupWrite (GroupAddress 3 4 90) (DPT5 2)  -- Betriebsmodus Wohnung (HVAC) auf Standby
+        groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeStandby)    -- Betriebsmodus Wohnung (HVAC) auf Standby
 
     modify $ const $ Just timerId
 

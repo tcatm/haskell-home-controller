@@ -2,6 +2,7 @@
 
 module KNXDatatypes
     ( KNXTimeOfDay (..)
+    , KNXHVACMode (..)
     , putKNXFloat16
     , getKNXFloat16
     ) where
@@ -48,6 +49,19 @@ instance Binary KNXTimeOfDay where
             min = fromIntegral b2
             sec = fromIntegral b3
         return $ KNXTimeOfDay weekDay' $ TimeOfDay hour min sec
+
+data KNXHVACMode = KNXHVACModeAuto
+                 | KNXHVACModeComfort
+                 | KNXHVACModeStandby
+                 | KNXHVACModeEconomy
+                 | KNXHVACModeBuildingProtection
+                 deriving (Eq, Show, Read, Enum)
+
+instance Binary KNXHVACMode where
+    put mode = putWord8 $ fromIntegral $ fromEnum mode
+    get = do
+        b <- getWord8
+        return $ toEnum $ fromIntegral b
 
 putKNXFloat16 :: Double -> Put
 putKNXFloat16 v =

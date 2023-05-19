@@ -27,6 +27,7 @@ module Device
     ) where
 
 import KNXAddress
+import KNXDatatypes
 import DPTs
 import Data.Word
 import Data.Binary.Get
@@ -162,3 +163,6 @@ watchDPT9 ga handler = eventLoop (groupValue ga getDPT9) $ \(DPT9 val) -> handle
 
 watchDPT18_1 :: GroupAddress -> ((Bool, Int) -> DeviceM s ()) -> DeviceM s ()
 watchDPT18_1 ga handler = eventLoop (groupValue ga getDPT18_1) $ \(DPT18_1 (val1, val2)) -> handler (val1, val2)
+
+watchDPT20_102 :: GroupAddress -> (KNXHVACMode -> DeviceM s ()) -> DeviceM s ()
+watchDPT20_102 ga handler = eventLoop (groupValue ga getDPT20_102) $ \(DPT20_102 val) -> handler val

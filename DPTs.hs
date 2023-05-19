@@ -19,6 +19,7 @@ module DPTs
     , getDPT14
     , getDPT16
     , getDPT18_1
+    , getDPT20_102
     ) where
 
 import Data.Binary
@@ -57,6 +58,7 @@ data DPT = DPT1 Bool -- short
          | DPT14 Double
          | DPT16 String
          | DPT18_1 (Bool, Int)
+         | DPT20_102 KNXHVACMode
          deriving (Eq, Show, Read)
 
 encodeDPT :: DPT -> EncodedDPT
@@ -98,6 +100,7 @@ putDPT (DPT18_1 (a, b)) =
         let byte = fromIntegral b :: Word8
             c = if a then 0x80 else 0x00
         putWord8 $ c .|. byte
+putDPT (DPT20_102 v) = put v
 
 getDPT1 :: Get DPT
 getDPT1 = DPT1 . (/= 0) <$> getWord8
@@ -155,3 +158,6 @@ getDPT16 = DPT16 <$> C.unpack <$> getRemainingLazyByteString
 
 getDPT18_1 :: Get DPT
 getDPT18_1 = (\v -> DPT18_1 ((v .&. 0x80 /= 0), fromIntegral $ v .&. 0x7F)) <$> getWord8
+
+getDPT20_102 :: Get DPT
+getDPT20_102 = DPT20_102 <$> get
