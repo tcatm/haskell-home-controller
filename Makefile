@@ -8,6 +8,7 @@ packages = \
 	-package conduit-extra \
 	-package mtl \
 	-package aeson \
+	-package yesod \
 	-package stm
 
 sources = \

@@ -6,7 +6,8 @@ import DPTs
 import Device
 import DeviceRunner
 import Console
-import TimeSender
+import Webinterface
+
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad.IO.Class
@@ -53,6 +54,7 @@ main = runStdoutLoggingT $ filterLogger logFilter $ do
   let actions = [ runKnx knxContext
                 , stdinLoop (sendQueue knxContext)
                 , runDevices devices deviceInput (sendQueue knxContext)
+                , runWebinterface
                 ]
 
   waitAllThreads actions
