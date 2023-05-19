@@ -2,7 +2,6 @@ module DPTs
     ( DPT (..)
     , EncodedDPT (..)
     , encodeDPT
-    , putDPT
     , getDPT1
     , getDPT2
     , getDPT3

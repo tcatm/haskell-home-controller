@@ -38,7 +38,6 @@ parseInput (groupAddressStr:dptName:value) = do
               "DPT3" -> DPT3 $ read $ head value
               "DPT4" -> DPT4 $ read $ head value
               "DPT5" -> DPT5 $ read $ head value
-              "DPT5_1" -> DPT5_1 $ read $ head value
               "DPT6" -> DPT6 $ read $ head value
               "DPT7" -> DPT7 $ read $ head value
               "DPT8" -> DPT8 $ read $ head value
@@ -46,6 +45,7 @@ parseInput (groupAddressStr:dptName:value) = do
               "DPT12" -> DPT12 $ read $ head value
               "DPT13" -> DPT13 $ read $ head value
               "DPT14" -> DPT14 $ read $ head value
+              "DPT15" -> DPT15 $ read $ head value
               "DPT16" -> DPT16 $ head value
               "DPT18_1" -> DPT18_1 $ (False, read $ head value)
               _ -> error "Failed to parse DPT"

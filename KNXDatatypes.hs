@@ -1,5 +1,3 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 module KNXDatatypes
     ( KNXTimeOfDay (..)
     , KNXHVACMode (..)
@@ -22,7 +20,7 @@ import GHC.Float
 data KNXTimeOfDay = KNXTimeOfDay
     { knxWeekDay :: Maybe DayOfWeek
     , knxTimeOfDay :: TimeOfDay
-    } deriving (Eq, Show, Read)
+    } deriving (Eq, Show)
 
 instance Binary KNXTimeOfDay where
     put (KNXTimeOfDay weekDay timeOfDay) = do
