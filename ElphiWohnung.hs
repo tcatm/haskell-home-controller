@@ -26,6 +26,7 @@ devices =   [ timeSender timeSenderConfig
             , lichtGästeWC
             , lichtGästebad
             , lichtAnkleide
+            , vorhangDevice
             , blindsDeviceKitchen
             ]
 
@@ -321,8 +322,40 @@ lichtAnkleide = staircaseLight "Treppenhausschaltung Ankleide" config
             , lightOffTime = 30 * 60
             }
 
+data Vorhang = Vorhang  { vorhangName :: String
+                        , vorhangInputGA :: GroupAddress
+                        , vorhangOpenGA :: GroupAddress
+                        , vorhangCloseGA :: GroupAddress
+                        } deriving (Show)
 
--- TODO
--- Sonnenschutz alle Räume
--- Verdunkelung alle Räume
--- Treppenhauslicht Ankleide, beide Gästebäder
+vorhänge =  [ Vorhang "Sonnenschutz Alle" (GroupAddress 2 0 6) (GroupAddress 2 0 7) (GroupAddress 2 0 8)
+            , Vorhang "Sonnenschutz Studio" (GroupAddress 2 1 30) (GroupAddress 2 1 31) (GroupAddress 2 1 32)
+            , Vorhang "Sonnenschutz Schlafzimmer" (GroupAddress 2 1 34) (GroupAddress 2 1 35) (GroupAddress 2 1 36)
+            , Vorhang "Sonnenschutz Küche" (GroupAddress 2 1 38) (GroupAddress 2 1 39) (GroupAddress 2 1 40)
+            , Vorhang "Sonnenschutz Wohnzimmer" (GroupAddress 2 1 42) (GroupAddress 2 1 43) (GroupAddress 2 1 44)
+            , Vorhang "Sonnenschutz Master Bedroom" (GroupAddress 2 1 46) (GroupAddress 2 1 47) (GroupAddress 2 1 48)
+            , Vorhang "Verdunkelung Alle" (GroupAddress 2 0 2) (GroupAddress 2 0 3) (GroupAddress 2 0 4)
+            , Vorhang "Verdunkelung Studio" (GroupAddress 2 1 2) (GroupAddress 2 1 3) (GroupAddress 2 1 4)
+            , Vorhang "Verdunkelung Schlafzimmer" (GroupAddress 2 1 6) (GroupAddress 2 1 7) (GroupAddress 2 1 8)
+            , Vorhang "Verdunkelung Küche" (GroupAddress 2 1 10) (GroupAddress 2 1 11) (GroupAddress 2 1 12)
+            , Vorhang "Verdunkelung Wohnzimmer" (GroupAddress 2 1 14) (GroupAddress 2 1 15) (GroupAddress 2 1 16)
+            , Vorhang "Verdunkelung Master Bedroom" (GroupAddress 2 1 18) (GroupAddress 2 1 19) (GroupAddress 2 1 20)
+            ]
+
+vorhangDevice :: Device
+vorhangDevice = makeDevice "Vorhänge" () $ vorhangDeviceF vorhänge
+
+vorhangDeviceF :: [Vorhang] -> DeviceM () ()
+vorhangDeviceF vorhänge = do
+    forM_ vorhänge $ \vorhang -> do
+        vorhangAufZu (vorhangName vorhang) (vorhangInputGA vorhang) (vorhangOpenGA vorhang) (vorhangCloseGA vorhang)
+
+vorhangAufZu :: String -> GroupAddress -> GroupAddress -> GroupAddress -> DeviceM () ()
+vorhangAufZu name inputGA openGA closeGA = do
+    watchDPT1 inputGA $ \state -> do
+        let stateStr = if state then "zu" else "auf"
+        debug $ "Vorhang " ++ name ++ " " ++ show stateStr
+        case state of
+            -- False means "open", True means "close"
+            False -> groupWrite openGA (DPT1 True)
+            True -> groupWrite closeGA (DPT1 True)
