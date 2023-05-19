@@ -195,8 +195,6 @@ allRoomsLightStateF roomLightStateMap outputAllRooms = do
 
 
 -- TODO
--- Raum Schalten (0 5 x -> 0 1 x) (DPT1 -> DPT18_1)
--- Raumstatus Licht je Raum ermitteln
 -- Rohrbegleitheizung
 -- Sonnenschutz alle Räume
 -- Verdunkelung alle Räume
