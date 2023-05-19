@@ -21,6 +21,11 @@ devices =   [ timeSender timeSenderConfig
             , meanTemperatureMasterBedroom
             , switchScene
             , allRoomsLightState
+            , rohrbegleitHeizung
+            , stoerungen
+            , lichtGästeWC
+            , lichtGästebad
+            , lichtAnkleide
             , blindsDeviceKitchen
             ]
 
@@ -193,11 +198,131 @@ allRoomsLightStateF roomLightStateMap outputAllRooms = do
                     debug $ "Any room is " ++ show anyOn ++ " (states: " ++ show allStates ++ ")"
                     groupWrite outputAllRooms (DPT1 anyOn)
 
+rohrbegleitHeizung :: Device
+rohrbegleitHeizung = makeDevice "Rohrbegleitheizung" Map.empty $ rohrbegleitHeizungF
+
+rohrbegleitHeizungF :: DeviceM (Map.Map GroupAddress Bool) ()
+rohrbegleitHeizungF = do
+    let addresses = [presenceGA, timerGA, anyLightsOnGA]
+
+    forM_ addresses $ \address -> do
+        groupRead address
+        watchDPT1 address $ \state -> do
+            debug $ "Read " ++ show state ++ " from " ++ show address
+            modify $ Map.insert address state
+            tryAll
+
+    where
+        presenceGA = GroupAddress 1 0 1
+        timerGA = GroupAddress 1 0 2
+        anyLightsOnGA = GroupAddress 0 4 1
+
+        tryAll = do
+            presenceState <- gets $ Map.lookup presenceGA
+            timerState <- gets $ Map.lookup timerGA
+            anyLightsOnState <- gets $ Map.lookup anyLightsOnGA
+
+            let orGate = case (timerState, anyLightsOnState) of
+                    (Just True, _) -> True
+                    (_, Just True) -> True
+                    _ -> False
+
+            let output = case presenceState of
+                    Just True -> orGate
+                    _ -> False
+
+            debug $ "Rohrbegleitheizung is " ++ show output ++ " (presence: " ++ show presenceState ++ ", timer: " ++ show timerState ++ ", anyLightsOn: " ++ show anyLightsOnState ++ ")"
+            groupWrite (GroupAddress 1 1 37) (DPT1 output)
+
+data StoerungenState = StoerungenState
+    { oredInputs :: Map.Map GroupAddress Bool
+    , stoerungDDC :: Bool
+    , watchdogTimer :: Maybe TimerId
+    } deriving (Show)
+
+stoerungen :: Device
+stoerungen = makeDevice "Störungen" (StoerungenState Map.empty False Nothing) $ stoerungenF
+
+stoerungenF :: DeviceM StoerungenState ()
+stoerungenF = do
+    resetWatchdog
+
+    forM_ watchedGAs $ \address -> do
+        groupRead address
+        watchDPT1 address $ \state -> do
+            debug $ "Read " ++ show state ++ " from " ++ show address
+            modify $ \s -> s { oredInputs = Map.insert address state (oredInputs s) }
+            updateOutput
+
+    watchDPT1 heartbeatGA $ \state -> do
+        debug $ "DDC Heartbeat: " ++ show state
+        when state $ do
+            debug "DDC Heartbeat received"
+            modify $ \s -> s { stoerungDDC = False }
+            groupWrite stoerungDDCGA (DPT1 False)
+            resetWatchdog
+            updateOutput
+
+    where
+        watchedGAs = map (\i -> GroupAddress 3 5 i) [20..23]
+        watchdogTimout = 180
+        heartbeatGA = GroupAddress 3 5 4
+        stoerungDDCGA = GroupAddress 3 5 19
+        sammelstoerungGA = GroupAddress 3 5 41
+
+        resetWatchdog = do
+            timerId <- gets $ watchdogTimer
+            case timerId of
+                Just timerId -> do
+                    cancelTimer timerId
+                    modify $ \s -> s { watchdogTimer = Nothing }
+                Nothing -> return ()
+
+            timerId <- scheduleIn watchdogTimout $ do
+                debug "Watchdog triggered"
+                modify $ \s -> s { stoerungDDC = True }
+                groupWrite stoerungDDCGA (DPT1 True)
+                updateOutput
+
+            modify $ \s -> s { watchdogTimer = Just timerId }
+        
+        updateOutput = do
+            inputs <- gets $ oredInputs
+            let orGate = any id $ Map.elems inputs 
+            ddc <- gets $ stoerungDDC
+            let output = orGate || ddc
+            debug $ "Störungen is " ++ show output ++ " (inputs: " ++ show inputs ++ ", ddc: " ++ show ddc ++ ")"
+            groupWrite sammelstoerungGA (DPT1 output)
+
+lichtGästeWC :: Device
+lichtGästeWC = staircaseLight "Treppenhausschaltung Gäste WC" config
+    where
+        config = StaircaseLightConfig
+            { lightOnAddress = GroupAddress 1 4 17
+            , lightOffAddress = GroupAddress 1 4 17
+            , lightOffTime = 20 * 60
+            }
+
+lichtGästebad :: Device
+lichtGästebad = staircaseLight "Treppenhausschaltung Gästebad" config
+    where
+        config = StaircaseLightConfig
+            { lightOnAddress = GroupAddress 0 1 3
+            , lightOffAddress = GroupAddress 0 1 3
+            , lightOffTime = 45 * 60
+            }
+
+lichtAnkleide :: Device
+lichtAnkleide = staircaseLight "Treppenhausschaltung Ankleide" config
+    where
+        config = StaircaseLightConfig
+            { lightOnAddress = GroupAddress 1 4 4
+            , lightOffAddress = GroupAddress 1 4 4
+            , lightOffTime = 30 * 60
+            }
 
 
 -- TODO
--- Rohrbegleitheizung
 -- Sonnenschutz alle Räume
 -- Verdunkelung alle Räume
 -- Treppenhauslicht Ankleide, beide Gästebäder
--- Störmeldungen: Sammelstörung und Watchdog für 3/5/4
