@@ -2,13 +2,22 @@ module DPTs
     ( DPT (..)
     , EncodedDPT (..)
     , encodeDPT
+    , putDPT
     , getDPT1
     , getDPT2
     , getDPT3
     , getDPT5
     , getDPT5_1
     , getDPT6
+    , getDPT7
+    , getDPT8
     , getDPT9
+    , getDPT10
+    , getDPT11
+    , getDPT12
+    , getDPT13
+    , getDPT14
+    , getDPT16
     , getDPT18_1
     ) where
 
@@ -48,44 +57,47 @@ data DPT = DPT1 Bool -- short
          | DPT14 Double
          | DPT16 String
          | DPT18_1 (Bool, Int)
-            deriving (Eq, Show)
+         deriving (Eq, Show, Read)
 
 encodeDPT :: DPT -> EncodedDPT
-encodeDPT dpt =
-    let (result, bool) = case dpt of
-                            DPT1 v -> (putWord8 $ if v then 0x01 else 0x00, True)
-                            DPT2 v -> (putWord8 $ (if fst v then 0x02 else 0x00) .|. (if snd v then 0x01 else 0x00), True)
-                            DPT3 v ->
-                                let limitedV = max (-8) (min 7 v)
-                                    word8V = fromIntegral limitedV :: Word8
-                                    signBit = (word8V `shiftR` 4) .&. 0x08
-                                    dataBits = word8V .&. 0x07
-                                in (putWord8 $ signBit .|. dataBits, True)
-                            DPT4 v -> (putWord8 $ fromIntegral $ fromEnum v, False)
-                            DPT5 v -> (putWord8 v, False)
-                            DPT5_1 v -> (putWord8 $ fromIntegral $ round (v * 255), False)
-                            DPT6 v -> (putWord8 $ fromIntegral v, False)
-                            DPT7 v -> (putWord16be v, False)
-                            DPT8 v -> (putWord16be $ fromIntegral v, False)
-                            DPT9 v -> (putKNXFloat16 v, False)
-                            DPT10 v -> (put v, False)
-                            DPT11 v -> let (year, month, day) = toGregorian v
-                                       in ( do
-                                            putWord8 $ fromIntegral day
-                                            putWord8 $ fromIntegral month
-                                            putWord8 $ fromIntegral $ year - 1900
-                                        , False)
-                            DPT12 v -> (putWord32be v, False)
-                            DPT13 v -> (putWord32be $ fromIntegral v, False)
-                            DPT14 v -> (putDoublebe v, False)
-                            DPT16 v -> (putLazyByteString $ C.pack v, False)
-                            DPT18_1 (a, b) ->
-                                ( do
-                                    let byte = fromIntegral b :: Word8
-                                        c = if a then 0x80 else 0x00
-                                    putWord8 $ c .|. byte
-                                , False)
-    in EncodedDPT (runPut result) bool
+encodeDPT dpt = EncodedDPT (runPut $ putDPT dpt) (isShort dpt)
+    where
+        isShort (DPT1 _) = True
+        isShort (DPT2 _) = True
+        isShort (DPT3 _) = True
+        isShort _ = False
+
+putDPT :: DPT -> Put
+putDPT (DPT1 v) = putWord8 $ if v then 0x01 else 0x00
+putDPT (DPT2 v) = putWord8 $ (if fst v then 0x02 else 0x00) .|. (if snd v then 0x01 else 0x00)
+putDPT (DPT3 v) =
+    let limitedV = max (-8) (min 7 v)
+        word8V = fromIntegral limitedV :: Word8
+        signBit = (word8V `shiftR` 4) .&. 0x08
+        dataBits = word8V .&. 0x07
+    in putWord8 $ signBit .|. dataBits
+putDPT (DPT4 v) = putWord8 $ fromIntegral $ fromEnum v
+putDPT (DPT5 v) = putWord8 v
+putDPT (DPT5_1 v) = putWord8 $ fromIntegral $ round (v * 255)
+putDPT (DPT6 v) = putWord8 $ fromIntegral v
+putDPT (DPT7 v) = putWord16be v
+putDPT (DPT8 v) = putWord16be $ fromIntegral v
+putDPT (DPT9 v) = putKNXFloat16 v
+putDPT (DPT10 v) = put v
+putDPT (DPT11 v) = let (year, month, day) = toGregorian v
+            in do
+                putWord8 $ fromIntegral day
+                putWord8 $ fromIntegral month
+                putWord8 $ fromIntegral $ year - 1900
+putDPT (DPT12 v) = putWord32be v
+putDPT (DPT13 v) = putWord32be $ fromIntegral v
+putDPT (DPT14 v) = putDoublebe v
+putDPT (DPT16 v) = putLazyByteString $ C.pack v
+putDPT (DPT18_1 (a, b)) =
+    do
+        let byte = fromIntegral b :: Word8
+            c = if a then 0x80 else 0x00
+        putWord8 $ c .|. byte
 
 getDPT1 :: Get DPT
 getDPT1 = DPT1 . (/= 0) <$> getWord8
