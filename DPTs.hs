@@ -19,11 +19,17 @@ import Data.Word
 import Data.Int
 import Data.Bits
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.Char8 as C
 
 import Data.Time.Clock
 import Data.Time.Calendar
 
 import KNXDatatypes
+
+data EncodedDPT = EncodedDPT
+    { encodedDPT :: LBS.ByteString
+    , encodedDPTIsShort :: Bool
+    } deriving (Show)
 
 data DPT = DPT1 Bool -- short
          | DPT2 (Bool, Bool) --short
@@ -40,15 +46,9 @@ data DPT = DPT1 Bool -- short
          | DPT12 Word32
          | DPT13 Int32
          | DPT14 Double
-         | DPT15 Word32
          | DPT16 String
          | DPT18_1 (Bool, Int)
             deriving (Eq, Show)
-
-data EncodedDPT = EncodedDPT
-    { encodedDPT :: LBS.ByteString
-    , encodedDPTIsShort :: Bool
-    } deriving (Show)
 
 encodeDPT :: DPT -> EncodedDPT
 encodeDPT dpt =
@@ -77,7 +77,8 @@ encodeDPT dpt =
                                         , False)
                             DPT12 v -> (putWord32be v, False)
                             DPT13 v -> (putWord32be $ fromIntegral v, False)
-                            DPT16 v -> (putStringUtf8 v, False)
+                            DPT14 v -> (putDoublebe v, False)
+                            DPT16 v -> (putLazyByteString $ C.pack v, False)
                             DPT18_1 (a, b) ->
                                 ( do
                                     let byte = fromIntegral b :: Word8
@@ -95,6 +96,9 @@ getDPT2 = (\v -> DPT2 ((v .&. 0x02 /= 0), (v .&. 0x01 /= 0))) <$> getWord8
 getDPT3 :: Get DPT
 getDPT3 = (\v -> DPT3 $ fromIntegral ((v .&. 0x08 `shiftR` 4) .|. (v .&. 0x07))) <$> getWord8
 
+getDPT4 :: Get DPT
+getDPT4 = DPT4 . toEnum . fromIntegral <$> getWord8
+
 getDPT5 :: Get DPT
 getDPT5 = DPT5 <$> getWord8
 
@@ -103,6 +107,12 @@ getDPT5_1 = DPT5_1 . (/ 255) . fromIntegral <$> getWord8
 
 getDPT6 :: Get DPT
 getDPT6 = DPT6 . fromIntegral <$> getInt8
+
+getDPT7 :: Get DPT
+getDPT7 = DPT7 <$> getWord16be
+
+getDPT8 :: Get DPT
+getDPT8 = DPT8 . fromIntegral <$> getWord16be
 
 getDPT9 :: Get DPT
 getDPT9 = DPT9 <$> getKNXFloat16
@@ -118,6 +128,18 @@ getDPT11 = do
     let year = fromIntegral c
     let interpretedYear = if year >= 90 then 1900 + year else 2000 + year
     return $ DPT11 $ fromGregorian (fromIntegral interpretedYear) (fromIntegral b) (fromIntegral a)
+
+getDPT12 :: Get DPT
+getDPT12 = DPT12 <$> getWord32be
+
+getDPT13 :: Get DPT
+getDPT13 = DPT13 . fromIntegral <$> getWord32be
+
+getDPT14 :: Get DPT
+getDPT14 = DPT14 <$> getDoublebe
+
+getDPT16 :: Get DPT
+getDPT16 = DPT16 <$> C.unpack <$> getRemainingLazyByteString
 
 getDPT18_1 :: Get DPT
 getDPT18_1 = (\v -> DPT18_1 ((v .&. 0x80 /= 0), fromIntegral $ v .&. 0x7F)) <$> getWord8
