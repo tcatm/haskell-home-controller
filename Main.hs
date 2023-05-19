@@ -5,6 +5,7 @@ import DeviceRunner
 import Console
 import Webinterface
 import Config
+import Webinterface
 
 import Control.Concurrent
 import Control.Concurrent.STM
