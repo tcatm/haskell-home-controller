@@ -32,7 +32,6 @@ parseInput :: [String] -> Maybe (GroupAddress, DPT)
 parseInput (groupAddressStr:dptName:value) = do
   groupAddress <- parseGroupAddressStr groupAddressStr
   let dpt = case dptName of
-    -- read and parse to bool
               "DPT1" -> DPT1 $ readBool value
               "DPT2" -> DPT2 $ readBoolTuple value
               "DPT3" -> DPT3 $ read $ head value
@@ -48,6 +47,7 @@ parseInput (groupAddressStr:dptName:value) = do
               "DPT14" -> DPT14 $ read $ head value
               "DPT16" -> DPT16 $ head value
               "DPT18_1" -> DPT18_1 $ (False, read $ head value)
+              _ -> error "Failed to parse DPT"
 
   return (groupAddress, dpt)
 
