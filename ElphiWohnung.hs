@@ -44,9 +44,9 @@ blindsConfigKitchen = BlindsConfig
     }
 
 presenceDevice :: Device
-presenceDevice = makeDevice "Anwesenheit" () presenceDeviceF
+presenceDevice = makeDevice "Anwesenheit" Nothing presenceDeviceF
 
-presenceDeviceF :: DeviceM () ()
+presenceDeviceF :: DeviceM (Maybe TimerId) ()
 presenceDeviceF = do
     let presenceGA = GroupAddress 0 1 12
     watchDPT1 presenceGA $ \presence -> do
@@ -60,7 +60,13 @@ enablePresence = do
     groupWrite (GroupAddress 1 3 1) (DPT5_1 0.7)    -- Bel. Decke Flur 1.1 auf 70%
     groupWrite (GroupAddress 3 4 90) (DPT5 1)       -- Betriebsmodus Wohnung (HVAC) auf Komfort
     groupWrite (GroupAddress 3 0 5) (DPT5_1 0.4)    -- Volumenstrom auf 40%
-    -- TODO Timer für HVAC abbrechen
+    
+    timerId <- gets id
+    case timerId of
+        Just timerId -> do 
+            cancelTimer timerId
+            modify $ const Nothing
+        Nothing -> return ()
 
 disablePresence = do
     groupWrite (GroupAddress 1 0 1) (DPT1 False)            -- Rückmeldung Anwesenheit
@@ -73,8 +79,12 @@ disablePresence = do
     groupWrite (GroupAddress 1 1 31) (DPT1 False)           -- Handtuch Heizung Gästebad
     groupWrite (GroupAddress 1 1 32) (DPT1 False)           -- Steckdose Bodentank 1
     groupWrite (GroupAddress 1 1 33) (DPT1 False)           -- Steckdose Spiegelheizung Masterbad
-    -- TODO Timer für HVAC starten, 3 Tage.
-    -- groupWrite (GroupAddress 3 4 90) (DPT5 2)  -- Betriebsmodus Wohnung (HVAC) auf Standby
+   
+    let timerDelay = 3 * 24 * 60 * 60
+    timerId <- scheduleIn timerDelay $ do
+        groupWrite (GroupAddress 3 4 90) (DPT5 2)  -- Betriebsmodus Wohnung (HVAC) auf Standby
+
+    modify $ const $ Just timerId
 
 meanTemperatureWohnzimmer :: Device
 meanTemperatureWohnzimmer = makeDevice "Mittelwert Temperatur Wohnzimmer" Map.empty $ meanTemperatureDevice addresses $ GroupAddress 3 2 2
