@@ -29,25 +29,21 @@ staircaseLight :: Device
 staircaseLight = makeDevice "StaircaseLight" initialLightState startDevice
 
 startDevice :: DeviceM LightState ()
-startDevice = do
-    eventLoop (groupValue lightOnAddress getDPT1) handleLightSwitch
+startDevice = watchDPT1 lightOnAddress handleLightSwitch
 
-handleLightSwitch :: DPT -> DeviceM LightState ()
-handleLightSwitch dpt = do
-    case dpt of
-        DPT1 state -> do
-            currentTime <- zonedTimeToUTC <$> getTime
-            -- if state is true and the light is not already on, remember the time
-            previousState <- gets lightOn
-            when (state && not previousState) $
-                modify $ \s -> s { lightOnTime = Just currentTime }
-            modify $ \s -> s { lightOn = state }
-            when state $ do
-                oldTimerId <- gets timerId
-                whenJust oldTimerId cancelTimer
-                newTimerId <- scheduleIn lightOffTime turnOffLight
-                modify $ \s -> s { timerOn = True, timerId = Just newTimerId }
-        _ -> return ()
+handleLightSwitch :: Bool -> DeviceM LightState ()
+handleLightSwitch state = do
+    currentTime <- zonedTimeToUTC <$> getTime
+    -- if state is true and the light is not already on, remember the time
+    previousState <- gets lightOn
+    when (state && not previousState) $
+        modify $ \s -> s { lightOnTime = Just currentTime }
+    modify $ \s -> s { lightOn = state }
+    when state $ do
+        oldTimerId <- gets timerId
+        whenJust oldTimerId cancelTimer
+        newTimerId <- scheduleIn lightOffTime turnOffLight
+        modify $ \s -> s { timerOn = True, timerId = Just newTimerId }
 
 turnOffLight :: DeviceM LightState ()
 turnOffLight = do

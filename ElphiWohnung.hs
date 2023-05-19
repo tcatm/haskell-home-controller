@@ -49,7 +49,7 @@ presenceDevice = makeDevice "Anwesenheit" () presenceDeviceF
 presenceDeviceF :: DeviceM () ()
 presenceDeviceF = do
     let presenceGA = GroupAddress 0 1 12
-    eventLoop (groupValue presenceGA getDPT1) $ \(DPT1 presence) -> do
+    watchDPT1 presenceGA $ \presence -> do
         debug $ "Presence: " ++ show presence
         case presence of
             True -> enablePresence
@@ -90,7 +90,7 @@ meanTemperatureDevice :: [GroupAddress] -> GroupAddress -> DeviceM (Map.Map Grou
 meanTemperatureDevice addresses output = do
     forM_ addresses $ \address -> do
         groupRead address
-        eventLoop (groupValue address getDPT9) $ \(DPT9 temp) -> do
+        watchDPT9 address $ \temp -> do
             debug $ "Read " ++ show temp ++ " from " ++ show address
             modify $ Map.insert address temp
             tryAll
@@ -113,7 +113,7 @@ switchSceneAddresses = map (\i -> (GroupAddress 0 5 i, GroupAddress 0 1 i)) [1..
 switchSceneF :: [(GroupAddress, GroupAddress)] -> DeviceM () ()
 switchSceneF addresses = do
     forM_ addresses $ \(input, output) -> do
-        eventLoop (groupValue input getDPT1) $ \(DPT1 state) -> do
+        watchDPT1 input $ \state -> do
             debug $ "Read " ++ show state ++ " from " ++ show input
             let scene = if state then 1 else 0
             groupWrite output (DPT18_1 (False, scene))
@@ -149,7 +149,7 @@ allRoomsLightStateF roomLightStateMap outputAllRooms = do
     forM_ roomLightStateMap $ \roomLightState -> do
         forM_ (lightStateGAs roomLightState) $ \ga -> do
             groupRead ga
-            eventLoop (groupValue ga getDPT1) $ \(DPT1 state) -> do
+            watchDPT1 ga $ \state -> do
                 debug $ "Read " ++ show state ++ " from " ++ show ga
                 states <- gets $ Map.lookup (roomName roomLightState)
 

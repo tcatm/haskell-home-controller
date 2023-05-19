@@ -44,24 +44,24 @@ makeBlindsDevice name config = makeDevice name initialBlindsState $ blindsDevice
 
 blindsDeviceF :: BlindsConfig -> DeviceM BlindsState ()
 blindsDeviceF config = do
-    eventLoop (groupValue (upDownGA config) getDPT1) upDownHandler
-    eventLoop (groupValue (stopGA config) getDPT1) stopHandler
-    eventLoop (groupValue (positionGA config) getDPT5_1) positionHandler
+    watchDPT1 (upDownGA config) upDownHandler
+    watchDPT1 (stopGA config) stopHandler
+    watchDPT5_1 (positionGA config) positionHandler
 
     where
-        upDownHandler (DPT1 False) = do
+        upDownHandler False = do
             debug "Received up command"
             moveTo 0 True
 
-        upDownHandler (DPT1 True) = do
+        upDownHandler True = do
             debug "Received down command"
             moveTo 1 True
 
-        stopHandler (DPT1 _) = do
+        stopHandler _ = do
             debug "Received stop command"
             changeState Idle
 
-        positionHandler (DPT5_1 pos) = do
+        positionHandler pos = do
             debug $ "Received position " ++ show pos
             moveTo pos False
 

@@ -19,10 +19,16 @@ module Device
     , cancelTimer
     , getTime
     , eventLoop
+    , watchDPT1
+    , watchDPT5
+    , watchDPT5_1
+    , watchDPT9
+    , watchDPT18_1
     ) where
 
 import KNXAddress
 import DPTs
+import Data.Word
 import Data.Binary.Get
 import Data.Time.Clock
 import Data.Time.LocalTime
@@ -141,3 +147,18 @@ eventLoop :: ((a -> DeviceM s ()) -> DeviceM s ()) -> (a -> DeviceM s ()) -> Dev
 eventLoop f h = f $ \a -> do
     h a
     eventLoop f h
+
+watchDPT1 :: GroupAddress -> (Bool -> DeviceM s ()) -> DeviceM s ()
+watchDPT1 ga handler = eventLoop (groupValue ga getDPT1) $ \(DPT1 val) -> handler val
+
+watchDPT5 :: GroupAddress -> (Word8 -> DeviceM s ()) -> DeviceM s ()
+watchDPT5 ga handler = eventLoop (groupValue ga getDPT5) $ \(DPT5 val) -> handler val
+
+watchDPT5_1 :: GroupAddress -> (Double -> DeviceM s ()) -> DeviceM s ()
+watchDPT5_1 ga handler = eventLoop (groupValue ga getDPT5_1) $ \(DPT5_1 val) -> handler val
+
+watchDPT9 :: GroupAddress -> (Double -> DeviceM s ()) -> DeviceM s ()
+watchDPT9 ga handler = eventLoop (groupValue ga getDPT9) $ \(DPT9 val) -> handler val
+
+watchDPT18_1 :: GroupAddress -> ((Bool, Int) -> DeviceM s ()) -> DeviceM s ()
+watchDPT18_1 ga handler = eventLoop (groupValue ga getDPT18_1) $ \(DPT18_1 (val1, val2)) -> handler (val1, val2)

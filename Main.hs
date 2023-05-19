@@ -91,5 +91,5 @@ sceneMultiplexer inputGA offset ouputGA = makeDevice "Scene Multiplexer" () $ sc
 
 sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM () ()
 sceneMultiplexerF inputAddr offset outputAddr = do
-    eventLoop (groupValue inputAddr getDPT18_1) $ \(DPT18_1 (False, a)) -> do
+    watchDPT18_1 inputAddr $ \(_, a) ->
         groupWrite outputAddr (DPT18_1 (False, a + offset))
