@@ -115,17 +115,13 @@ parseMessage msg = do
         0x27 -> do
             let telegram = B.decode msg :: KNXTelegram
                 apci = APDU.apci $ apdu telegram
+                groupAddress = dstField telegram
+                payload' = payload $ apdu telegram
 
             case apci of
-                0x00 -> do
-                    let groupAddress = dstField telegram
-                    Right $ IncomingGroupValueRead groupAddress
-                0x40 -> do
-                    let groupAddress = dstField telegram
-                    Right $ IncomingGroupValueResponse groupAddress (payload $ apdu telegram)
-                0x80 -> do
-                    let groupAddress = dstField telegram
-                    Right $ IncomingGroupValueWrite groupAddress (payload $ apdu telegram)
+                ACPIGroupValueRead      -> Right $ IncomingGroupValueRead groupAddress
+                ACPIGroupValueResponse  -> Right $ IncomingGroupValueResponse groupAddress payload'
+                ACPIGroupValueWrite     -> Right $ IncomingGroupValueWrite groupAddress payload'
                 _ -> Left $ "Received unknown APDU: " <> show (apdu telegram)
         _   -> Left $ "Received unknown message code: " <> show messageCode
 
@@ -169,14 +165,14 @@ sendTelegram telegram = do
 
     -- Echo the message back to the callback
     case apci $ apdu telegram of
-        0x00 -> processTelegram $ IncomingGroupValueRead (dstField telegram)
-        0x40 -> processTelegram $ IncomingGroupValueResponse (dstField telegram) (payload $ apdu telegram)
-        0x80 -> processTelegram $ IncomingGroupValueWrite (dstField telegram) (payload $ apdu telegram)
+        ACPIGroupValueRead      -> processTelegram $ IncomingGroupValueRead (dstField telegram)
+        ACPIGroupValueResponse  -> processTelegram $ IncomingGroupValueResponse (dstField telegram) (payload $ apdu telegram)
+        ACPIGroupValueWrite     -> processTelegram $ IncomingGroupValueWrite (dstField telegram) (payload $ apdu telegram)
         _    -> return ()
 
     return ()
 
-composeTelegram :: B.Word16 -> GroupAddress -> Maybe DPT -> KNXTelegram
+composeTelegram :: ACPI -> GroupAddress -> Maybe DPT -> KNXTelegram
 composeTelegram apci groupAddress mdpt =
     KNXTelegram  { messageCode = 39
                  , srcField = Nothing
@@ -194,12 +190,12 @@ composeTelegram apci groupAddress mdpt =
 emit :: GroupMessage -> KNXM ()
 emit (GroupValueWrite groupAddress dpt) = do
     logDebugNS logSourceKNX . pack $ "Writing " <> show dpt <> " to " <> show groupAddress
-    sendTelegram $ composeTelegram 0x80 groupAddress (Just dpt)
+    sendTelegram $ composeTelegram ACPIGroupValueWrite groupAddress (Just dpt)
 
 emit (GroupValueRead groupAddress) = do
     logDebugNS logSourceKNX . pack $ "Reading from " <> show groupAddress
-    sendTelegram $ composeTelegram 0x00 groupAddress Nothing
+    sendTelegram $ composeTelegram ACPIGroupValueRead groupAddress Nothing
 
 emit (GroupValueResponse groupAddress dpt) = do
     logDebugNS logSourceKNX . pack $ "Responding to " <> show groupAddress <> " with " <> show dpt
-    sendTelegram $ composeTelegram 0x40 groupAddress (Just dpt)
+    sendTelegram $ composeTelegram ACPIGroupValueResponse groupAddress (Just dpt)
