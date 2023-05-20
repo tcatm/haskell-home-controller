@@ -126,7 +126,7 @@ scheduleAt :: UTCTime -> DeviceM s () -> DeviceM s (TimerId)
 scheduleAt time device = DeviceM $ \(_, s) -> (timerId, s, [action])
     where
         action = Defer $ ScheduledContinuation timerId time device
-        timerId = TimerId $ hash (show time ++ show device)
+        timerId = TimerId $ hash $ show time
 
 -- | Schedule an action to be run after a duration given in seconds.
 scheduleIn :: NominalDiffTime -> DeviceM s () -> DeviceM s (TimerId)
