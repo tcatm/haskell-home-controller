@@ -3,6 +3,7 @@ packages = \
 	-package monad-logger \
 	-package network \
 	-package pretty-show \
+	-package conduit \
 	-package stm
 
 sources = \

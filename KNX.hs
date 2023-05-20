@@ -24,6 +24,7 @@ import Network.Socket hiding (send, sendTo, recv, recvFrom)
 import Network.Socket.ByteString (send, recv)
 import Data.Text (pack)
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString as BS
 import qualified Data.Binary as B
 import Data.Binary.Get
 import Data.Binary.Put
@@ -35,6 +36,8 @@ import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Logger
+import Data.Conduit hiding (connect)
+import qualified Data.Conduit.List as CL
 
 logSourceKNX :: LogSource
 logSourceKNX = "KNX"
@@ -83,40 +86,49 @@ disconnectKnx = KNXM $ do
     logInfoNS logSourceKNX . pack $ "Disconnected from KNX gateway."
     return ()
 
+sourceSocket :: Socket -> ConduitT () BS.ByteString KNXM ()
+sourceSocket sock = loop where
+    loop = do
+        bs <- liftIO $ recv sock 1024
+        case BS.length bs of
+            -- If we get an empty bytestring, the socket is closed.
+            0 -> return ()
+            _ -> yield bs >> loop
+
+messageChunks :: ConduitT BS.ByteString BS.ByteString KNXM ()
+messageChunks = loop BS.empty
+    where
+        loop buffer = do
+            nextChunk <- await
+            case nextChunk of
+                Nothing -> when (not $ BS.null buffer) $ leftover buffer  -- Pass along any remaining data
+                Just chunk -> do
+                    let buffer' = BS.append buffer chunk
+                    processBuffer buffer'
+        processBuffer buffer
+            | BS.length buffer < 2 = loop buffer  -- We need at least two bytes to get the length
+            | otherwise = do
+                let msgLen = fromIntegral $ runGet getWord16be $ LBS.fromStrict buffer
+                    (msg, buffer') = BS.splitAt msgLen $ BS.drop 2 buffer
+                if BS.length msg < msgLen
+                    then loop buffer  -- We don't have a complete message yet, wait for more data
+                    else do
+                        yield msg  -- We have a complete message, yield it and continue with the remaining buffer
+                        processBuffer buffer'
+
 runKnxLoop :: KNXM ()
 runKnxLoop = do
     logInfoNS logSourceKNX . pack $ "Starting KNX loop"
-    evalStateT (loop) LBS.empty
-    where
-        loop = do
-            knx <- lift $ KNXM ask
-            input <- liftIO $ LBS.fromStrict <$> recv (sock knx) 1024
-            if LBS.null input
-                then do
-                    logErrorNS logSourceKNX . pack $ "Connection closed by the server"
-                    return ()
-                else do
-                    processInput input
-                    loop
+    knx <- KNXM ask
+    runConduit $ sourceSocket (sock knx) .| messageChunks .| CL.mapM_ processMessage
+    logErrorNS logSourceKNX . pack $ "Socket closed, exiting KNX loop"
 
-processInput :: LBS.ByteString -> StateT LBS.ByteString KNXM ()
-processInput input = do
-    buffer <- get
-
-    let buffer' = LBS.append buffer input
-        msgLength = fromIntegral $ runGet getWord16be buffer'
-        msg = LBS.drop 2 buffer'
-
-    newBuffer <- do
-        if (LBS.length msg) >= msgLength
-            then do
-                let (telegramBytes, rest) = LBS.splitAt msgLength msg
-                case parseMessage telegramBytes of
-                    Left err -> logWarnNS logSourceKNX . pack $ "Error parsing message: " <> err
-                    Right msg -> lift $ processTelegram msg
-                return rest
-            else return buffer'
-    put newBuffer
+processMessage :: BS.ByteString -> KNXM ()
+processMessage msg = do
+    let telegram = parseMessage $ LBS.fromStrict msg
+    case telegram of
+        Left err -> logWarnNS logSourceKNX . pack $ "Error parsing message: " <> err
+        Right msg -> processTelegram msg
 
 processTelegram :: IncomingMessage -> KNXM ()
 processTelegram msg = do
