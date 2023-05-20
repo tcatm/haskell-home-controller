@@ -137,7 +137,10 @@ handleKNX payload state c@(GroupValueContinuation ga parser device) = do
     case runGetOrFail parser (encodedDPT payload) of
         Left (_, _, err) -> do
             logWarnNS logSourceDeviceRunner . pack $ color Red $ "    Error parsing DPT: " ++ err
-            return ([], state)
+            logWarnNS logSourceDeviceRunner . pack $ color Red $ "    Payload: " ++ show payload
+
+            -- Re-queue continuation
+            return ([c], state)
 
         Right (_, _, dpt) -> do
             logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Received " ++ show dpt ++ " at " ++ show ga
