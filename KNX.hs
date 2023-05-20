@@ -98,7 +98,7 @@ processInput input = do
             then do
                 let (telegramBytes, rest) = LBS.splitAt msgLength msg
                 case parseMessage telegramBytes of
-                    Left err -> logWarnNS logSourceKNX . pack $ "Error parsing message: " ++ err
+                    Left err -> logWarnNS logSourceKNX . pack $ "Error parsing message: " <> err
                     Right msg -> lift $ processTelegram msg
                 return rest
             else return buffer'
@@ -106,7 +106,7 @@ processInput input = do
 
 processTelegram :: IncomingMessage -> KNXM ()
 processTelegram msg = do
-    logDebugNS logSourceKNX . pack $ "Received message: " ++ show msg
+    logDebugNS logSourceKNX . pack $ "Received message: " <> show msg
     KNXCallback cb' <- KNXM $ asks callback
     liftIO $ cb' msg
 
@@ -135,8 +135,8 @@ parseMessage msg = do
                             IncomingGroupValueWrite { igvwAddress = groupAddress
                                                     , igvwPayload = payload $ apdu telegram
                                                     }
-                _ -> Left $ "Received unknown APDU: " ++ show (apdu telegram)
-        _   -> Left $ "Received unknown message code: " ++ show messageCode
+                _ -> Left $ "Received unknown APDU: " <> show (apdu telegram)
+        _   -> Left $ "Received unknown message code: " <> show messageCode
 
 eibOpenGroupconMessage :: LBS.ByteString
 eibOpenGroupconMessage = runPut $ do
@@ -170,7 +170,7 @@ sendTelegram :: KNXTelegram -> KNXM ()
 sendTelegram telegram = do
     knx <- KNXM ask
     let msg = composeMessage $ B.encode telegram
-    logDebugNS logSourceKNX . pack $ "Sending: " ++ hexWithSpaces msg
+    logDebugNS logSourceKNX . pack $ "Sending: " <> hexWithSpaces msg
     _ <- liftIO $ send (sock knx) (LBS.toStrict msg)
 
     -- Echo the message back to the callback
@@ -181,7 +181,7 @@ sendTelegram telegram = do
 
 emit :: GroupMessage -> KNXM ()
 emit (GroupValueWrite groupAddress dpt) = do
-    logDebugNS logSourceKNX . pack $ "Writing " ++ show dpt ++ " to " ++ show groupAddress
+    logDebugNS logSourceKNX . pack $ "Writing " <> show dpt <> " to " <> show groupAddress
     let telegram = KNXTelegram  { messageCode = 39
                                 , srcField = Nothing
                                 , dstField = groupAddress
@@ -194,7 +194,7 @@ emit (GroupValueWrite groupAddress dpt) = do
     return ()
 
 emit (GroupValueRead groupAddress) = do
-    logDebugNS logSourceKNX . pack $ "Reading from " ++ show groupAddress
+    logDebugNS logSourceKNX . pack $ "Reading from " <> show groupAddress
     let telegram = KNXTelegram  { messageCode = 39
                                 , srcField = Nothing
                                 , dstField = groupAddress
@@ -207,7 +207,7 @@ emit (GroupValueRead groupAddress) = do
     return ()
 
 emit (GroupValueResponse groupAddress dpt) = do
-    logDebugNS logSourceKNX . pack $ "Responding to " ++ show groupAddress ++ " with " ++ show dpt
+    logDebugNS logSourceKNX . pack $ "Responding to " <> show groupAddress <> " with " <> show dpt
     let telegram = KNXTelegram  { messageCode = 39
                                 , srcField = Nothing
                                 , dstField = groupAddress

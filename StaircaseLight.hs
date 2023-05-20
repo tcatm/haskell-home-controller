@@ -58,7 +58,7 @@ turnOffLight lightOffAddress = do
     case maybeOnTime of
         Just onTime -> do
             let duration = diffUTCTime currentTime onTime
-            debug $ "Light was on for " ++ show duration
+            debug $ "Light was on for " <> show duration
         Nothing -> return ()
     groupWrite lightOffAddress (DPT1 False)
     modify $ \s -> s { lightOn = False, timerId = Nothing, lightOnTime = Nothing }

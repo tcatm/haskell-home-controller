@@ -25,7 +25,7 @@ showTriplet :: Int -> Int -> Int -> Char -> String
 showTriplet main middle sub sep = printf "%d%c%d%c%d" main sep middle sep sub
 
 instance Show KNXAddress where
-  show (KNXAddress main middle sub) = "KNXAddress " ++ showTriplet main middle sub '.'
+  show (KNXAddress main middle sub) = "KNXAddress " <> showTriplet main middle sub '.'
 
 instance Read KNXAddress where
   readsPrec _ str = case parseKNXAddressStr str of
@@ -39,7 +39,7 @@ data GroupAddress = GroupAddress
     } deriving (Ord, Eq)
 
 instance Show GroupAddress where
-  show (GroupAddress main middle sub) = "GroupAddress " ++ showTriplet main middle sub '/'
+  show (GroupAddress main middle sub) = "GroupAddress " <> showTriplet main middle sub '/'
 
 instance Read GroupAddress where
   readsPrec _ str = case parseGroupAddressStr str of

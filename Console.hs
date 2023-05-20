@@ -16,13 +16,13 @@ stdinLoop :: KNXM ()
 stdinLoop =
   forever $ do
   line <- liftIO $ hGetLine stdin
-  liftIO $ putStrLn $ "Received from stdin: " ++ line
+  liftIO $ putStrLn $ "Received from stdin: " <> line
   -- Parse "1/2/3 0 0 0 ..." to KNXAdress + List of integers
   let parts = words line
   case parseInput parts of
     Just (groupAddress, dpt) -> do
       -- Do something with the parsed values
-      liftIO $ putStrLn $ "Parsed: " ++ show groupAddress ++ " " ++ show dpt
+      liftIO $ putStrLn $ "Parsed: " <> show groupAddress <> " " <> show dpt
       emit $ GroupValueWrite groupAddress dpt
       return ()
     Nothing -> liftIO $ putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."

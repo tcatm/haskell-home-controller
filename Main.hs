@@ -65,7 +65,7 @@ sampleDevice = makeDevice "Sample Device" Map.empty sampleDeviceF
 sampleDeviceF :: DeviceM (Map.Map GroupAddress Int) ()
 sampleDeviceF = do
   time <- getTime
-  debug $ "Time: " ++ show time
+  debug $ "Time: " <> show time
   readAndTry groupAddressA
   readAndTry groupAddressB
   
@@ -74,7 +74,7 @@ sampleDeviceF = do
     groupAddressB = GroupAddress 0 0 2
 
     readAndTry ga = eventLoop (groupValue ga getDPT6) $ \(DPT6 a) -> do
-        debug $ "Read " ++ show a ++ " from " ++ show ga
+        debug $ "Read " <> show a <> " from " <> show ga
         modify $ Map.insert ga $ fromIntegral a
         tryBoth
 
@@ -84,7 +84,7 @@ sampleDeviceF = do
       case (a, b) of
         (Just a', Just b') -> 
           let sum = a' + b'
-          in debug $ "a + b = " ++ show sum
+          in debug $ "a + b = " <> show sum
         _ -> return ()
     
 sceneMultiplexer inputGA offset ouputGA = makeDevice "Scene Multiplexer" () $ sceneMultiplexerF inputGA offset ouputGA

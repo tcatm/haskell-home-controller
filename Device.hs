@@ -53,8 +53,8 @@ data Continuation s = StartContinuation (DeviceM s ())
 
 instance Show (Continuation s) where
     show (StartContinuation _) = "StartContinuation"
-    show (GroupValueContinuation ga _ _) = "GroupValueContinuation " ++ show ga
-    show (ScheduledContinuation timerId time _) = "ScheduledContinuation " ++ show timerId ++ " " ++ show time
+    show (GroupValueContinuation ga _ _) = "GroupValueContinuation " <> show ga
+    show (ScheduledContinuation timerId time _) = "ScheduledContinuation " <> show timerId <> " " <> show time
 
 data Action s   = GroupWrite GroupAddress DPT
                 | GroupRead GroupAddress
@@ -63,11 +63,11 @@ data Action s   = GroupWrite GroupAddress DPT
                 | CancelTimer TimerId
 
 instance Show (Action s) where
-    show (GroupWrite ga dpt) = "GroupWrite " ++ show ga ++ " " ++ show dpt
-    show (GroupRead ga) = "GroupRead " ++ show ga
-    show (Defer c) = "Defer " ++ show c
-    show (Log msg) = "Log " ++ msg
-    show (CancelTimer timerId) = "CancelTimer " ++ show timerId
+    show (GroupWrite ga dpt) = "GroupWrite " <> show ga <> " " <> show dpt
+    show (GroupRead ga) = "GroupRead " <> show ga
+    show (Defer c) = "Defer " <> show c
+    show (Log msg) = "Log " <> msg
+    show (CancelTimer timerId) = "CancelTimer " <> show timerId
 
 data DeviceM s a = DeviceM { runDeviceM :: (ZonedTime, s) -> (a, s, [Action s]) }
 
@@ -85,13 +85,13 @@ instance Applicative (DeviceM s) where
     deviceF <*> deviceA = DeviceM $ \(time, s) ->
         let (f, s', actions) = runDeviceM deviceF (time, s)
             (a, s'', actions') = runDeviceM deviceA (time, s')
-        in (f a, s'', actions ++ actions')
+        in (f a, s'', actions <> actions')
 
 instance Monad (DeviceM s) where
     device >>= f = DeviceM $ \(time, s) ->
         let (a, s', actions) = runDeviceM device (time, s)
             (b, s'', actions') = runDeviceM (f a) (time, s')
-        in (b, s'', actions ++ actions')
+        in (b, s'', actions <> actions')
 
 makeDevice :: (Show s) => String -> s -> (DeviceM s ()) -> Device
 makeDevice name state device = Device $ Device' name state [StartContinuation device] mempty

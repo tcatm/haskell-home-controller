@@ -62,7 +62,7 @@ blindsDeviceF config = do
             changeState Idle
 
         positionHandler pos = do
-            debug $ "Received position " ++ show pos
+            debug $ "Received position " <> show pos
             moveTo pos False
 
         setBlindState :: BlindState -> DeviceM BlindsState ()
@@ -111,7 +111,7 @@ blindsDeviceF config = do
 
         moveTo :: Double -> Bool -> DeviceM BlindsState ()
         moveTo pos fullmove = do
-            debug $ "Moving to " ++ show pos
+            debug $ "Moving to " <> show pos
 
             oldState <- gets blindState
             case oldState of
@@ -133,9 +133,9 @@ blindsDeviceF config = do
                                     True -> timeToMove' + motorStartDelay config
                                     False -> (remainingTimeF delta timeToMove') + motorStartDelay config
 
-            debug $ "position': " ++ show position' ++ ", direction: " ++ show direction
+            debug $ "position': " <> show position' <> ", direction: " <> show direction
 
-            debug $ "Delta: " ++ show delta ++ ", timeToMove: " ++ show timeToMove' ++ ", remainingTime: " ++ show remainingTime
+            debug $ "Delta: " <> show delta <> ", timeToMove: " <> show timeToMove' <> ", remainingTime: " <> show remainingTime
 
             when (remainingTime > 0) $ do
                 changeState direction
@@ -147,10 +147,10 @@ blindsDeviceF config = do
                 cancelTimer (fromJust timerId)
                 setTimerId Nothing
 
-            debug $ "Remaining time: " ++ show remainingTime
+            debug $ "Remaining time: " <> show remainingTime
 
             when (remainingTime > 0) $ do
-                debug $ "Scheduling stop in " ++ show remainingTime ++ " seconds"
+                debug $ "Scheduling stop in " <> show remainingTime <> " seconds"
                 timerId <- scheduleIn remainingTime $ do
                     debug "Timer fired"
                     changeState Idle
@@ -163,11 +163,11 @@ blindsDeviceF config = do
             unless (isNothing lastMove) $ do
                 now <- zonedTimeToUTC <$> getTime
                 let time = diffUTCTime now (fromJust lastMove)
-                debug $ "Time since last move: " ++ show time
+                debug $ "Time since last move: " <> show time
                 let timeToMove' = timeToMove config
-                debug $ "Time to move: " ++ show timeToMove'
+                debug $ "Time to move: " <> show timeToMove'
                 oldPosition <- gets position
-                debug $ "Old position: " ++ show oldPosition
+                debug $ "Old position: " <> show oldPosition
 
                 let deltaPosition = calcPosition timeToMove' time
 
@@ -176,6 +176,6 @@ blindsDeviceF config = do
                         MovingDown -> oldPosition + deltaPosition
                         Idle -> oldPosition
 
-                debug $ "New position: " ++ show newPosition
+                debug $ "New position: " <> show newPosition
                 groupWrite (positionStateGA config) (DPT5_1 newPosition)
                 setPosition newPosition

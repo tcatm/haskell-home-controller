@@ -57,7 +57,7 @@ presenceDeviceF :: DeviceM (Maybe TimerId) ()
 presenceDeviceF = do
     let presenceGA = GroupAddress 0 1 12
     watchDPT1 presenceGA $ \presence -> do
-        debug $ "Presence: " ++ show presence
+        debug $ "Presence: " <> show presence
         case presence of
             True -> enablePresence
             False -> disablePresence
@@ -108,7 +108,7 @@ meanTemperatureDevice addresses output = do
     forM_ addresses $ \address -> do
         groupRead address
         watchDPT9 address $ \temp -> do
-            debug $ "Read " ++ show temp ++ " from " ++ show address
+            debug $ "Read " <> show temp <> " from " <> show address
             modify $ Map.insert address temp
             tryAll
 
@@ -119,7 +119,7 @@ meanTemperatureDevice addresses output = do
                 [] -> return ()
                 _ -> do
                     let meanTemp = sum temps / fromIntegral (length temps)
-                    debug $ "Mean temperature: " ++ show meanTemp ++ "°C, measured temperatures: " ++ show temps
+                    debug $ "Mean temperature: " <> show meanTemp <> "°C, measured temperatures: " <> show temps
                     groupWrite output (DPT9 meanTemp)
 
 switchScene :: Device
@@ -131,7 +131,7 @@ switchSceneF :: [(GroupAddress, GroupAddress)] -> DeviceM () ()
 switchSceneF addresses = do
     forM_ addresses $ \(input, output) -> do
         watchDPT1 input $ \state -> do
-            debug $ "Read " ++ show state ++ " from " ++ show input
+            debug $ "Read " <> show state <> " from " <> show input
             let scene = if state then 1 else 0
             groupWrite output (DPT18_1 (False, scene))
 
@@ -167,7 +167,7 @@ allRoomsLightStateF roomLightStateMap outputAllRooms = do
         forM_ (lightStateGAs roomLightState) $ \ga -> do
             groupRead ga
             watchDPT1 ga $ \state -> do
-                debug $ "Read " ++ show state ++ " from " ++ show ga
+                debug $ "Read " <> show state <> " from " <> show ga
                 states <- gets $ Map.lookup (roomName roomLightState)
 
                 let states' = case states of
@@ -187,7 +187,7 @@ allRoomsLightStateF roomLightStateMap outputAllRooms = do
                 Just states' -> do
                     let allStates = Map.elems states'
                     let anyOn = any id allStates
-                    debug $ "Room " ++ roomName roomLightState ++ " is " ++ show anyOn ++ " (states: " ++ show allStates ++ ")"
+                    debug $ "Room " <> roomName roomLightState <> " is " <> show anyOn <> " (states: " <> show allStates <> ")"
                     groupWrite (lightOutputGA roomLightState) (DPT1 anyOn)
         tryAll = do
             states <- gets $ Map.elems
@@ -196,7 +196,7 @@ allRoomsLightStateF roomLightStateMap outputAllRooms = do
                 _ -> do
                     let allStates = concatMap Map.elems states
                     let anyOn = any id allStates
-                    debug $ "Any room is " ++ show anyOn ++ " (states: " ++ show allStates ++ ")"
+                    debug $ "Any room is " <> show anyOn <> " (states: " <> show allStates <> ")"
                     groupWrite outputAllRooms (DPT1 anyOn)
 
 rohrbegleitHeizung :: Device
@@ -209,7 +209,7 @@ rohrbegleitHeizungF = do
     forM_ addresses $ \address -> do
         groupRead address
         watchDPT1 address $ \state -> do
-            debug $ "Read " ++ show state ++ " from " ++ show address
+            debug $ "Read " <> show state <> " from " <> show address
             modify $ Map.insert address state
             tryAll
 
@@ -232,7 +232,7 @@ rohrbegleitHeizungF = do
                     Just True -> orGate
                     _ -> False
 
-            debug $ "Rohrbegleitheizung is " ++ show output ++ " (presence: " ++ show presenceState ++ ", timer: " ++ show timerState ++ ", anyLightsOn: " ++ show anyLightsOnState ++ ")"
+            debug $ "Rohrbegleitheizung is " <> show output <> " (presence: " <> show presenceState <> ", timer: " <> show timerState <> ", anyLightsOn: " <> show anyLightsOnState <> ")"
             groupWrite (GroupAddress 1 1 37) (DPT1 output)
 
 data StoerungenState = StoerungenState
@@ -251,12 +251,12 @@ stoerungenF = do
     forM_ watchedGAs $ \address -> do
         groupRead address
         watchDPT1 address $ \state -> do
-            debug $ "Read " ++ show state ++ " from " ++ show address
+            debug $ "Read " <> show state <> " from " <> show address
             modify $ \s -> s { oredInputs = Map.insert address state (oredInputs s) }
             updateOutput
 
     watchDPT1 heartbeatGA $ \state -> do
-        debug $ "DDC Heartbeat: " ++ show state
+        debug $ "DDC Heartbeat: " <> show state
         when state $ do
             debug "DDC Heartbeat received"
             modify $ \s -> s { stoerungDDC = False }
@@ -292,7 +292,7 @@ stoerungenF = do
             let orGate = any id $ Map.elems inputs 
             ddc <- gets $ stoerungDDC
             let output = orGate || ddc
-            debug $ "Störungen is " ++ show output ++ " (inputs: " ++ show inputs ++ ", ddc: " ++ show ddc ++ ")"
+            debug $ "Störungen is " <> show output <> " (inputs: " <> show inputs <> ", ddc: " <> show ddc <> ")"
             groupWrite sammelstoerungGA (DPT1 output)
 
 lichtGästeWC :: Device
@@ -354,7 +354,7 @@ vorhangAufZu :: String -> GroupAddress -> GroupAddress -> GroupAddress -> Device
 vorhangAufZu name inputGA openGA closeGA = do
     watchDPT1 inputGA $ \state -> do
         let stateStr = if state then "zu" else "auf"
-        debug $ "Vorhang " ++ name ++ " " ++ show stateStr
+        debug $ "Vorhang " <> name <> " " <> show stateStr
         case state of
             -- False means "open", True means "close"
             False -> groupWrite openGA (DPT1 True)
