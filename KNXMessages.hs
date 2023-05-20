@@ -4,6 +4,7 @@ module KNXMessages
     , IncomingGroupValueRead (..)
     , IncomingGroupValueResponse (..)
     , IncomingGroupValueWrite (..)
+    , OutgoingMessage (..)
     , GroupMessage (..)
     , GroupValueRead (..)
     , GroupValueResponse (..)
@@ -53,6 +54,11 @@ instance IncomingGroupMessage IncomingGroupValueWrite where
     msgPayload = Just . igvwPayload
 
 -- Outgoing messages
+
+data OutgoingMessage = OutgoingRead GroupValueRead
+                     | OutgoingResponse GroupValueResponse
+                     | OutgoingWrite GroupValueWrite
+                     deriving (Show)
 
 class GroupMessage a where
     groupAddress :: a -> GroupAddress

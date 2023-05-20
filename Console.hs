@@ -12,8 +12,8 @@ import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.IO.Class
 
-stdinLoop :: KNXConnection -> (LoggingT IO) ()
-stdinLoop knx = 
+stdinLoop :: KNXM ()
+stdinLoop =
   forever $ do
   line <- liftIO $ hGetLine stdin
   liftIO $ putStrLn $ "Received from stdin: " ++ line
@@ -23,7 +23,7 @@ stdinLoop knx =
     Just (groupAddress, dpt) -> do
       -- Do something with the parsed values
       liftIO $ putStrLn $ "Parsed: " ++ show groupAddress ++ " " ++ show dpt
-      runKNX knx $ groupWrite $ GroupValueWrite groupAddress dpt
+      groupWrite $ GroupValueWrite groupAddress dpt
       return ()
     Nothing -> liftIO $ putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 

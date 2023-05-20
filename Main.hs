@@ -1,7 +1,7 @@
 module Main where
 
 import KNXAddress
-import KNX (connectKnx, KNXCallback(..), runKNX, runKnxLoop, disconnectKnx)
+import KNX hiding (groupWrite, groupRead)
 import DPTs
 import Device
 import DeviceRunner
@@ -51,7 +51,7 @@ main = runStdoutLoggingT $ filterLogger logFilter $ do
   let devices = Elphi.devices
 
   let actions = [ runKNX knx $ runKnxLoop 
-                , stdinLoop knx
+                , runKNX knx $ stdinLoop
                 , runKNX knx $ runDevices devices deviceInput
                 ]
 
