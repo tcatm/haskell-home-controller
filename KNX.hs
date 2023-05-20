@@ -67,6 +67,22 @@ createTCPConnection host port = do
     connect sock (addrAddress serverAddr)
     return sock
 
+connectKnx :: HostName -> ServiceName -> KNXCallback -> (LoggingT IO) KNXConnection
+connectKnx host port cb = do
+    sock <- liftIO $ createTCPConnection host port
+    -- send eibOpenGroupcon
+    let message = composeMessage eibOpenGroupconMessage
+    _ <- liftIO $ send sock (LBS.toStrict message)
+    logInfoNS logSourceKNX . pack $ "Connected to KNX gateway."
+    return KNXConnection { host = host, port = port, sock = sock, callback = cb }
+
+disconnectKnx :: KNXM ()
+disconnectKnx = KNXM $ do
+    knx <- ask
+    liftIO $ close (sock knx)
+    logInfoNS logSourceKNX . pack $ "Disconnected from KNX gateway."
+    return ()
+
 runKnxLoop :: KNXM ()
 runKnxLoop = do
     logInfoNS logSourceKNX . pack $ "Starting KNX loop"
@@ -74,7 +90,7 @@ runKnxLoop = do
     where
         loop = do
             knx <- lift $ KNXM ask
-            input <- liftIO $ LBS.fromStrict <$> recv (sock knx) 1024  -- liftIO should be used here
+            input <- liftIO $ LBS.fromStrict <$> recv (sock knx) 1024
             if LBS.null input
                 then do
                     logErrorNS logSourceKNX . pack $ "Connection closed by the server"
@@ -139,22 +155,6 @@ composeMessage msg = runPut $ do
 
     where
         msg' = runPut msg
-
-connectKnx :: HostName -> ServiceName -> KNXCallback -> (LoggingT IO) KNXConnection
-connectKnx host port cb = do
-    sock <- liftIO $ createTCPConnection host port
-    -- send eibOpenGroupcon
-    let message = composeMessage eibOpenGroupconMessage
-    _ <- liftIO $ send sock (LBS.toStrict message)
-    logInfoNS logSourceKNX . pack $ "Connected to KNX gateway."
-    return KNXConnection { host = host, port = port, sock = sock, callback = cb }
-
-disconnectKnx :: KNXM ()
-disconnectKnx = KNXM $ do
-    knx <- ask
-    liftIO $ close (sock knx)
-    logInfoNS logSourceKNX . pack $ "Disconnected from KNX gateway."
-    return ()
 
 sendTelegram :: KNXTelegram -> KNXM ()
 sendTelegram telegram = do
