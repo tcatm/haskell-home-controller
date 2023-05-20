@@ -33,7 +33,10 @@ import System.Console.Pretty
 logSourceDeviceRunner :: LogSource
 logSourceDeviceRunner = "DeviceRunner"
 
-data DeviceInput = StartDevice | KNXIncomingMessage IncomingMessage | TimerEvent TimerId UTCTime deriving (Show)
+data DeviceInput    = StartDevice
+                    | KNXIncomingMessage IncomingMessage
+                    | TimerEvent TimerId UTCTime
+                    deriving (Show)
 
 type DeviceRunnerT = ReaderT (TChan DeviceInput) KNXM
 type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
@@ -83,14 +86,14 @@ filterF input c = case input of
                             _ -> False
 
 filterKNXMessage :: IncomingMessage -> Continuation s -> Bool
-filterKNXMessage (IncomingWrite msg) c = 
+filterKNXMessage (IncomingGroupValueWrite ga _) c =
     case c of
-        GroupValueContinuation ga _ _ -> ga == incomingGA msg
+        GroupValueContinuation ga' _ _ -> ga' == ga
         _ -> False
 
-filterKNXMessage (IncomingResponse msg) c =
+filterKNXMessage (IncomingGroupValueResponse ga _) c =
     case c of
-        GroupValueContinuation ga _ _ -> ga == incomingGA msg
+        GroupValueContinuation ga' _ _ -> ga' == ga
         _ -> False
 
 filterKNXMessage _ _ = False
@@ -142,8 +145,8 @@ performContinuation (TimerEvent timerId _) state c@(ScheduledContinuation _ _ de
     runDeviceWithEffects state c device
 
 performContinuationKNX :: (Show s) => IncomingMessage -> s -> Continuation s -> TimerT ([Continuation s], s)
-performContinuationKNX (IncomingWrite msg) = handleKNX (igvwPayload msg)
-performContinuationKNX (IncomingResponse msg) = handleKNX (igvrPayload msg)
+performContinuationKNX (IncomingGroupValueWrite ga payload) = handleKNX payload
+performContinuationKNX (IncomingGroupValueResponse ga payload) = handleKNX payload
 
 handleKNX :: (Show s) => EncodedDPT -> s -> Continuation s -> TimerT ([Continuation s], s)
 handleKNX payload state c@(GroupValueContinuation ga parser device) = do

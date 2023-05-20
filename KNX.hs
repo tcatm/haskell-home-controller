@@ -7,8 +7,6 @@ module KNX
     , disconnectKnx
     , runKnxLoop
     , KNXConnection (..)
-    , GroupMessage (..)
-    , IncomingGroupMessage (..)
     , KNXCallback (..)
     , KNXM (..)
     , runKNX
@@ -121,34 +119,30 @@ parseMessage msg = do
             case apci of
                 0x00 -> do
                     let groupAddress = dstField telegram
-                    Right $ IncomingRead $
-                            IncomingGroupValueRead { igrAddress = groupAddress }
+                    Right $ IncomingGroupValueRead groupAddress
                 0x40 -> do
                     let groupAddress = dstField telegram
-                    Right $ IncomingResponse $
-                            IncomingGroupValueResponse { igvrAddress = groupAddress
-                                                       , igvrPayload = payload $ apdu telegram
-                                                       }
+                    Right $ IncomingGroupValueResponse groupAddress (payload $ apdu telegram)
                 0x80 -> do
                     let groupAddress = dstField telegram
-                    Right $ IncomingWrite $
-                            IncomingGroupValueWrite { igvwAddress = groupAddress
-                                                    , igvwPayload = payload $ apdu telegram
-                                                    }
+                    Right $ IncomingGroupValueWrite groupAddress (payload $ apdu telegram)
                 _ -> Left $ "Received unknown APDU: " <> show (apdu telegram)
         _   -> Left $ "Received unknown message code: " <> show messageCode
 
-eibOpenGroupconMessage :: LBS.ByteString
-eibOpenGroupconMessage = runPut $ do
+eibOpenGroupconMessage :: Put
+eibOpenGroupconMessage = do
     putWord16be $ fromIntegral eibOpenGroupcon
     putWord16be 0
     putWord8 0
 
-composeMessage :: LBS.ByteString -> LBS.ByteString
+composeMessage :: Put -> LBS.ByteString
 composeMessage msg = runPut $ do
-    let msgLength = fromIntegral $ LBS.length msg
+    let msgLength = LBS.length msg'
     putWord16be $ fromIntegral msgLength
-    putLazyByteString msg
+    putLazyByteString msg'
+
+    where
+        msg' = runPut msg
 
 connectKnx :: HostName -> ServiceName -> KNXCallback -> (LoggingT IO) KNXConnection
 connectKnx host port cb = do
@@ -169,52 +163,43 @@ disconnectKnx = KNXM $ do
 sendTelegram :: KNXTelegram -> KNXM ()
 sendTelegram telegram = do
     knx <- KNXM ask
-    let msg = composeMessage $ B.encode telegram
+    let msg = composeMessage $ B.put telegram
     logDebugNS logSourceKNX . pack $ "Sending: " <> hexWithSpaces msg
     _ <- liftIO $ send (sock knx) (LBS.toStrict msg)
 
     -- Echo the message back to the callback
-    processTelegram $ IncomingWrite $ IncomingGroupValueWrite { igvwAddress = dstField telegram
-                                                              , igvwPayload = payload $ apdu telegram
-                                                              }
+    case apci $ apdu telegram of
+        0x00 -> processTelegram $ IncomingGroupValueRead (dstField telegram)
+        0x40 -> processTelegram $ IncomingGroupValueResponse (dstField telegram) (payload $ apdu telegram)
+        0x80 -> processTelegram $ IncomingGroupValueWrite (dstField telegram) (payload $ apdu telegram)
+        _    -> return ()
+
     return ()
+
+composeTelegram :: B.Word16 -> GroupAddress -> Maybe DPT -> KNXTelegram
+composeTelegram apci groupAddress mdpt =
+    KNXTelegram  { messageCode = 39
+                 , srcField = Nothing
+                 , dstField = groupAddress
+                 , apdu = APDU   { tpci = 0x00
+                                 , apci = apci
+                                 , APDU.payload = payload
+                                 }
+                 }
+    where
+        payload = case mdpt of
+            Just dpt -> encodeDPT dpt
+            Nothing -> EncodedDPT (LBS.pack [0]) True
 
 emit :: GroupMessage -> KNXM ()
 emit (GroupValueWrite groupAddress dpt) = do
     logDebugNS logSourceKNX . pack $ "Writing " <> show dpt <> " to " <> show groupAddress
-    let telegram = KNXTelegram  { messageCode = 39
-                                , srcField = Nothing
-                                , dstField = groupAddress
-                                , apdu = APDU   { tpci = 0x00
-                                                , apci = 0x80
-                                                , APDU.payload = encodeDPT dpt
-                                                }
-                                }
-    sendTelegram telegram
-    return ()
+    sendTelegram $ composeTelegram 0x80 groupAddress (Just dpt)
 
 emit (GroupValueRead groupAddress) = do
     logDebugNS logSourceKNX . pack $ "Reading from " <> show groupAddress
-    let telegram = KNXTelegram  { messageCode = 39
-                                , srcField = Nothing
-                                , dstField = groupAddress
-                                , apdu = APDU   { tpci = 0x00
-                                                , apci = 0x00
-                                                , APDU.payload = EncodedDPT (LBS.pack [0]) True
-                                                }
-                                }
-    sendTelegram telegram
-    return ()
+    sendTelegram $ composeTelegram 0x00 groupAddress Nothing
 
 emit (GroupValueResponse groupAddress dpt) = do
     logDebugNS logSourceKNX . pack $ "Responding to " <> show groupAddress <> " with " <> show dpt
-    let telegram = KNXTelegram  { messageCode = 39
-                                , srcField = Nothing
-                                , dstField = groupAddress
-                                , apdu = APDU   { tpci = 0x00
-                                                , apci = 0x40
-                                                , APDU.payload = encodeDPT dpt
-                                                }
-                                }
-    sendTelegram telegram
-    return ()
+    sendTelegram $ composeTelegram 0x40 groupAddress (Just dpt)
