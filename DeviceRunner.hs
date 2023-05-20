@@ -133,14 +133,14 @@ performContinuationKNX (IncomingWrite msg) = handleKNX (igvwPayload msg)
 performContinuationKNX (IncomingResponse msg) = handleKNX (igvrPayload msg)
 
 handleKNX :: (Show s) => EncodedDPT -> s -> Continuation s -> TimerT ([Continuation s], s)
-handleKNX payload state c@(GroupValueContinuation _ parser device) = do
+handleKNX payload state c@(GroupValueContinuation ga parser device) = do
     case runGetOrFail parser (encodedDPT payload) of
         Left (_, _, err) -> do
             logWarnNS logSourceDeviceRunner . pack $ color Red $ "    Error parsing DPT: " ++ err
             return ([], state)
 
         Right (_, _, dpt) -> do
-            logInfoNS logSourceDeviceRunner . pack $ color Green $ "    DPT: " ++ show dpt
+            logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Received " ++ show dpt ++ " at " ++ show ga
 
             runDeviceWithEffects state c (device dpt)
 

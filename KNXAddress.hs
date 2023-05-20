@@ -12,8 +12,8 @@ module KNXAddress
 import Data.Bits
 import Data.Word
 import Data.List.Split (splitOn)
-import Text.Printf (printf)
 import Text.Read (readMaybe)
+import Text.Printf (printf)
 
 data KNXAddress = KNXAddress
     { mainKA :: Int
@@ -25,7 +25,12 @@ showTriplet :: Int -> Int -> Int -> Char -> String
 showTriplet main middle sub sep = printf "%d%c%d%c%d" main sep middle sep sub
 
 instance Show KNXAddress where
-  show (KNXAddress main middle sub) = showTriplet main middle sub '.'
+  show (KNXAddress main middle sub) = "KNXAddress " ++ showTriplet main middle sub '.'
+
+instance Read KNXAddress where
+  readsPrec _ str = case parseKNXAddressStr str of
+    Just ka -> [(ka, "")]
+    Nothing -> []
 
 data GroupAddress = GroupAddress
     { mainGA :: Int
@@ -34,7 +39,12 @@ data GroupAddress = GroupAddress
     } deriving (Ord, Eq)
 
 instance Show GroupAddress where
-  show (GroupAddress main middle sub) = showTriplet main middle sub '/'
+  show (GroupAddress main middle sub) = "GroupAddress " ++ showTriplet main middle sub '/'
+
+instance Read GroupAddress where
+  readsPrec _ str = case parseGroupAddressStr str of
+    Just ga -> [(ga, "")]
+    Nothing -> []
 
 conv :: Int -> Int -> Int -> Int -> Int -> Word16
 conv s1 s2 mainG middleG subG = fromIntegral $ (mainG `shiftL` s1) + (middleG `shiftL` s2) + subG
