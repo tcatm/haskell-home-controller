@@ -44,11 +44,11 @@ runDevices devices deviceInput =
 
 deviceRunner :: [Device] -> DeviceRunnerT ()
 deviceRunner devices = do
-    queue <- ask
+    inputChan <- ask
     devices' <- mapDevices StartDevice devices
 
     let loop devices'' = do
-          input <- liftIO $ atomically $ readTChan queue
+          input <- liftIO $ atomically $ readTChan inputChan
           devices''' <- mapDevices input devices''
           loop devices'''
 
@@ -182,12 +182,12 @@ performDeviceAction (Log msg) = do
 
 performDeviceAction (GroupWrite ga dpt) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueWrite " ++ show dpt ++ " to " ++ show ga
-    lift $ lift $ KNX.groupWrite $ GroupValueWrite ga dpt
+    lift $ lift $ KNX.emit $ GroupValueWrite ga dpt
     return Nothing
 
 performDeviceAction (GroupRead ga) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueRead from " ++ show ga
-    lift $ lift $ KNX.groupRead $ GroupValueRead ga
+    lift $ lift $ KNX.emit $ GroupValueRead ga
     return Nothing
 
 performDeviceAction (Defer continuation) = do
@@ -202,12 +202,12 @@ performDeviceAction (Defer continuation) = do
             return $ Just continuation
 
         ScheduledContinuation timerId time device -> do
-            queue <- lift $ ask
+            inputChan <- lift $ ask
             threadId <- liftIO $ forkIO $ do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
                 threadDelay $ ceiling $ 1000000 * delay
-                atomically $ writeTChan queue $ TimerEvent timerId time
+                atomically $ writeTChan inputChan $ TimerEvent timerId time
 
             modify $ Map.insert timerId threadId
             return $ Just continuation

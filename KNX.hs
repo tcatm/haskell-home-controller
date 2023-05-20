@@ -5,8 +5,6 @@
 module KNX 
     ( connectKnx
     , disconnectKnx
-    , groupWrite
-    , groupRead
     , runKnxLoop
     , KNXConnection (..)
     , GroupMessage (..)
@@ -15,6 +13,7 @@ module KNX
     , KNXM (..)
     , runKNX
     , logSourceKNX
+    , emit
     ) where
 
 import APDU
@@ -180,8 +179,8 @@ sendTelegram telegram = do
                                                               }
     return ()
 
-groupWrite :: GroupValueWrite -> KNXM ()
-groupWrite (GroupValueWrite groupAddress dpt) = do
+emit :: GroupMessage -> KNXM ()
+emit (GroupValueWrite groupAddress dpt) = do
     logDebugNS logSourceKNX . pack $ "Writing " ++ show dpt ++ " to " ++ show groupAddress
     let telegram = KNXTelegram  { messageCode = 39
                                 , srcField = Nothing
@@ -194,8 +193,7 @@ groupWrite (GroupValueWrite groupAddress dpt) = do
     sendTelegram telegram
     return ()
 
-groupRead :: GroupValueRead -> KNXM ()
-groupRead (GroupValueRead groupAddress) = do
+emit (GroupValueRead groupAddress) = do
     logDebugNS logSourceKNX . pack $ "Reading from " ++ show groupAddress
     let telegram = KNXTelegram  { messageCode = 39
                                 , srcField = Nothing
@@ -203,6 +201,19 @@ groupRead (GroupValueRead groupAddress) = do
                                 , apdu = APDU   { tpci = 0x00
                                                 , apci = 0x00
                                                 , APDU.payload = EncodedDPT (LBS.pack [0]) True
+                                                }
+                                }
+    sendTelegram telegram
+    return ()
+
+emit (GroupValueResponse groupAddress dpt) = do
+    logDebugNS logSourceKNX . pack $ "Responding to " ++ show groupAddress ++ " with " ++ show dpt
+    let telegram = KNXTelegram  { messageCode = 39
+                                , srcField = Nothing
+                                , dstField = groupAddress
+                                , apdu = APDU   { tpci = 0x00
+                                                , apci = 0x40
+                                                , APDU.payload = encodeDPT dpt
                                                 }
                                 }
     sendTelegram telegram

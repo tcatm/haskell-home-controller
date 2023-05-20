@@ -4,11 +4,7 @@ module KNXMessages
     , IncomingGroupValueRead (..)
     , IncomingGroupValueResponse (..)
     , IncomingGroupValueWrite (..)
-    , OutgoingMessage (..)
     , GroupMessage (..)
-    , GroupValueRead (..)
-    , GroupValueResponse (..)
-    , GroupValueWrite (..)
     ) where
 
 import KNXAddress
@@ -55,37 +51,7 @@ instance IncomingGroupMessage IncomingGroupValueWrite where
 
 -- Outgoing messages
 
-data OutgoingMessage = OutgoingRead GroupValueRead
-                     | OutgoingResponse GroupValueResponse
-                     | OutgoingWrite GroupValueWrite
-                     deriving (Show)
-
-class GroupMessage a where
-    groupAddress :: a -> GroupAddress
-    msgDpt :: a -> Maybe DPT
-
-data GroupValueRead = GroupValueRead
-    { gvrAddress :: GroupAddress
-    } deriving (Show)
-
-data GroupValueResponse = GroupValueResponse
-    { gvrpAddress :: GroupAddress
-    , gvrpDpt :: DPT
-    } deriving (Show)
-
-data GroupValueWrite = GroupValueWrite
-    { gvwAddress :: GroupAddress
-    , gvwDpt :: DPT
-    } deriving (Show)
-
-instance GroupMessage GroupValueRead where
-    groupAddress = gvrAddress
-    msgDpt _ = Nothing
-
-instance GroupMessage GroupValueResponse where
-    groupAddress = gvrpAddress
-    msgDpt = Just . gvrpDpt
-
-instance GroupMessage GroupValueWrite where
-    groupAddress = gvwAddress
-    msgDpt = Just . gvwDpt
+data GroupMessage   = GroupValueRead GroupAddress
+                    | GroupValueResponse GroupAddress DPT
+                    | GroupValueWrite GroupAddress DPT
+                    deriving (Show)

@@ -23,7 +23,7 @@ stdinLoop =
     Just (groupAddress, dpt) -> do
       -- Do something with the parsed values
       liftIO $ putStrLn $ "Parsed: " ++ show groupAddress ++ " " ++ show dpt
-      groupWrite $ GroupValueWrite groupAddress dpt
+      emit $ GroupValueWrite groupAddress dpt
       return ()
     Nothing -> liftIO $ putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 
