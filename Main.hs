@@ -20,8 +20,8 @@ import qualified ElphiWohnung as Elphi
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
 
-knxCallback :: TQueue DeviceInput -> KNXCallback
-knxCallback queue = KNXCallback $ atomically <$> writeTQueue queue . KNXIncomingMessage
+knxCallback :: TChan DeviceInput -> KNXCallback
+knxCallback chan = KNXCallback $ atomically <$> writeTChan chan . KNXIncomingMessage
 
 -- Define a helper function to create a thread and return an MVar
 forkIOWithSync :: LoggingT IO () -> LoggingT IO (MVar ())
@@ -45,7 +45,7 @@ logFilter _ _ = True
 
 main :: IO ()
 main = runStdoutLoggingT $ filterLogger logFilter $ do
-  deviceInput <- liftIO $ newTQueueIO
+  deviceInput <- liftIO $ newTChanIO
   knx <- connectKnx knxGatewayHost knxGatewayPort (knxCallback deviceInput)
 
   let devices = Elphi.devices

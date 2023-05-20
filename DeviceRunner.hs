@@ -35,10 +35,10 @@ logSourceDeviceRunner = "DeviceRunner"
 
 data DeviceInput = StartDevice | KNXIncomingMessage IncomingMessage | TimerEvent TimerId UTCTime deriving (Show)
 
-type DeviceRunnerT = ReaderT (TQueue DeviceInput) KNXM
+type DeviceRunnerT = ReaderT (TChan DeviceInput) KNXM
 type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
 
-runDevices :: [Device] -> TQueue DeviceInput -> KNXM ()
+runDevices :: [Device] -> TChan DeviceInput -> KNXM ()
 runDevices devices deviceInput = 
     runReaderT (deviceRunner devices) deviceInput
 
@@ -48,7 +48,7 @@ deviceRunner devices = do
     devices' <- mapDevices StartDevice devices
 
     let loop devices'' = do
-          input <- liftIO $ atomically $ readTQueue queue
+          input <- liftIO $ atomically $ readTChan queue
           devices''' <- mapDevices input devices''
           loop devices'''
 
@@ -207,7 +207,7 @@ performDeviceAction (Defer continuation) = do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
                 threadDelay $ ceiling $ 1000000 * delay
-                atomically $ writeTQueue queue $ TimerEvent timerId time
+                atomically $ writeTChan queue $ TimerEvent timerId time
 
             modify $ Map.insert timerId threadId
             return $ Just continuation
