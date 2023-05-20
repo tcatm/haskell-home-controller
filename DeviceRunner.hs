@@ -55,7 +55,20 @@ deviceRunner devices = do
     loop devices'        
 
 mapDevices :: DeviceInput -> [Device] -> DeviceRunnerT [Device]
-mapDevices input = mapM (\(Device d) -> Device <$> processDeviceInput input d)
+mapDevices input devices = do 
+    devices' <- mapM (\(Device d) -> Device <$> processDeviceInput input d) devices
+
+    -- debugDevices devices'
+
+    return devices'
+
+debugDevices :: [Device] -> DeviceRunnerT ()
+debugDevices devices = liftIO $ do
+    putStrLn $ color Blue "Devices:"
+    mapM_ (\(Device d) -> do
+        putStrLn $ color Green $ "    " ++ deviceName d
+        putStrLn $ color Green $ "        Continuations: " ++ show (deviceContinuations d)
+        ) devices
 
 filterF :: DeviceInput -> Continuation s -> Bool
 filterF input c = case input of
