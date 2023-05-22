@@ -192,7 +192,7 @@ handleKNXValue payload state c@(GroupValueContinuation ga parser device) = do
 
         Right (_, _, dpt) -> do
             logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Received " <> show dpt <> " at " <> show ga
-            tell [ object [ "type" .= ("KNXIn" :: String) , "ga" .= show ga , "dpt" .= show dpt ] ]
+            tell [ object [ "type" .= ("KNXIn" :: String) , "ga" .= ga , "dpt" .= dpt ] ]
             runDeviceWithEffects state c (device dpt)
 
 handleKNXread :: (Show s) => s -> Continuation s -> TimerT ([Continuation s], s)
@@ -224,7 +224,7 @@ performDeviceAction (Log msg) = do
 
 performDeviceAction (GroupWrite ga dpt) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueWrite " <> show dpt <> " to " <> show ga
-    tell [ object [ "type" .= ("KNXOut" :: String) , "ga" .= show ga , "dpt" .= show dpt ] ]
+    tell [ object [ "type" .= ("KNXOut" :: String) , "ga" .= ga , "dpt" .= dpt ] ]
     lift . lift $ sendKNXMessage $ GroupValueWrite ga dpt
     return Nothing
 

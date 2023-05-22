@@ -1,3 +1,7 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module DPTs
     ( DPT (..)
     , EncodedDPT (..)
@@ -22,17 +26,21 @@ module DPTs
     , getDPT20_102
     ) where
 
+import Data.Aeson
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.Word
 import Data.Int
 import Data.Bits
+import Data.Typeable
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as C
 
 import Data.Time.Clock
 import Data.Time.Calendar
+
+import GHC.Generics
 
 import KNXDatatypes
 
@@ -59,7 +67,15 @@ data DPT = DPT1 Bool -- short
          | DPT16 String
          | DPT18_1 (Bool, Int)
          | DPT20_102 KNXHVACMode
-         deriving (Eq, Show, Read)
+         deriving (Eq, Show, Read, Generic, Typeable)
+
+instance ToJSON DPT where
+    toJSON = genericToJSON defaultOptions
+        { sumEncoding = TaggedObject
+            { tagFieldName = "type"
+            , contentsFieldName = "value"
+            }
+        }
 
 encodeDPT :: DPT -> EncodedDPT
 encodeDPT dpt = EncodedDPT (runPut $ putDPT dpt) (isShort dpt)
