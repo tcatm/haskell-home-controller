@@ -58,9 +58,6 @@ newtype TimerId = TimerId Int deriving (Eq, Ord, Show, Data, Typeable)
 instance ToJSON TimerId where
     toJSON (TimerId i) = toJSON i
 
-instance ToJSON TimerId where
-    toJSON (TimerId i) = toJSON i
-
 data Continuation s = StartContinuation (DeviceM s ())
                     | GroupValueContinuation GroupAddress (Get DPT) (DPT -> DeviceM s ())
                     | GroupReadContinuation GroupAddress (DeviceM s ())
