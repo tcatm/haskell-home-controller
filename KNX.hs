@@ -33,8 +33,9 @@ import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Logger
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM
-import Control.Concurrent.Async (async, wait)
+import Control.Concurrent.Async (async, wait, cancel, waitAny)
 import Data.Conduit hiding (connect)
 import qualified Data.Conduit.Network as CN
 import qualified Data.Conduit.List as CL
@@ -128,27 +129,28 @@ runKnx :: KNXContext -> LoggingT IO ()
 runKnx ctx = runReaderT runKnxLoop ctx
 
 runKnxLoop :: KNXCtxM ()
-runKnxLoop = do
+runKnxLoop = forever $ do
     logInfoNS logSourceKNX . pack $ "Starting KNX loop"
 
     sock <- connectKnx
 
     evalStateT knxLoop $ KNXState sock
 
+    -- wait 5 seconds before reconnecting
+    liftIO $ threadDelay $ 5 * 1000000
+
 runKNXStateM :: (Loc -> LogSource -> LogLevel -> LogStr -> IO ()) -> KNXState -> KNXContext -> KNXStateM () -> IO ()
 runKNXStateM logger state ctx m = do
     runLoggingT (runReaderT (evalStateT m state) ctx) logger
 
+inputConduit :: Socket -> ConduitT () Void KNXStateM ()
+inputConduit sock = recvConduit sock .| CL.mapM_ handleTelegram
+
+queueConduit :: TQueue GroupMessage -> ConduitT () Void KNXStateM ()
+queueConduit queue = sourceTQueue queue .| CL.mapM_ handleQueue
+
 knxLoop :: KNXStateM ()
 knxLoop = do
-    cb <- lift $ asks callback
-    queue <- lift $ asks sendQueue
-
-    let inputConduit sock = recvConduit sock .| CL.mapM_ handleTelegram
-    let queueConduit = sourceTQueue queue .| CL.mapM_ handleQueue
-    
-    logInfoNS logSourceKNX . pack $ "Starting input conduit"
-
     ctx <- lift $ ask
     state <- get
     logger <- askLoggerIO
@@ -158,13 +160,17 @@ knxLoop = do
             sock <- gets sock
             runConduit (inputConduit sock)
 
-    logInfoNS logSourceKNX . pack $ "Starting queue conduit"
-
     a2 <- liftIO $ async $ do
-        runKNXStateM logger state ctx $ forever $ runConduit queueConduit
+        runKNXStateM logger state ctx $ forever $ do
+            queue <- lift $ asks sendQueue
+            runConduit (queueConduit queue)
         putStrLn "Queue conduit finished"
 
-    liftIO $ wait a1
+    let asynclist = [a1, a2]
+
+    liftIO $ waitAny asynclist
+    -- cancel remaining threads
+    liftIO $ mapM_ cancel asynclist
 
     logErrorNS logSourceKNX . pack $ "Socket closed, exiting KNX loop"
 
