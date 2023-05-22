@@ -1,4 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module Device 
     ( DeviceM (..)
@@ -40,8 +41,11 @@ import Data.Hashable
 import Data.Map (Map)
 import Data.Aeson
 import Control.Concurrent
+import GHC.Generics
+import Data.Data
+import Data.Typeable
 
-data Device = forall s. Show s => Device (Device' s)
+data Device = forall s. (Show s, ToJSON s) => Device (Device' s)
 
 data Device' s = Device'    { deviceName :: String
                             , deviceState :: s
@@ -49,7 +53,7 @@ data Device' s = Device'    { deviceName :: String
                             , deviceTimers :: Map TimerId ThreadId
                             } deriving (Show)
 
-newtype TimerId = TimerId Int deriving (Eq, Ord, Show)
+newtype TimerId = TimerId Int deriving (Eq, Ord, Show, Data, Typeable)
 
 instance ToJSON TimerId where
     toJSON (TimerId i) = toJSON i
@@ -104,7 +108,7 @@ instance Monad (DeviceM s) where
             (b, s'', actions') = runDeviceM (f a) (time, s')
         in (b, s'', actions <> actions')
 
-makeDevice :: (Show s) => String -> s -> (DeviceM s ()) -> Device
+makeDevice :: (Show s, ToJSON s) => String -> s -> (DeviceM s ()) -> Device
 makeDevice name state device = Device $ Device' name state [StartContinuation device] mempty
 
 gets :: (s -> a) -> DeviceM s a

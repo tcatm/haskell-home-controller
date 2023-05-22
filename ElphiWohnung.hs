@@ -1,3 +1,6 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 module ElphiWohnung
     ( devices
     )
@@ -14,6 +17,8 @@ import TimeSender
 
 import qualified Data.Map as Map
 import Control.Monad
+import GHC.Generics
+import Data.Aeson
 
 devices =   [ timeSender timeSenderConfig
             , presenceDevice
@@ -50,11 +55,12 @@ blindsConfigKitchen = BlindsConfig
     , motorStartDelay = 3
     }
 
-
 data PresenceDeviceState = PresenceDeviceState
     { presence :: Maybe Bool
     , presenceTimer :: Maybe TimerId
-    } deriving (Show)
+    } deriving (Show, Generic)
+
+instance ToJSON PresenceDeviceState
 
 presenceDeviceInitialState = PresenceDeviceState
     { presence = Nothing
@@ -255,7 +261,9 @@ data StoerungenState = StoerungenState
     { oredInputs :: Map.Map GroupAddress Bool
     , stoerungDDC :: Bool
     , watchdogTimer :: Maybe TimerId
-    } deriving (Show)
+    } deriving (Show, Generic)
+
+instance ToJSON StoerungenState
 
 stoerungen :: Device
 stoerungen = makeDevice "Störungen" (StoerungenState Map.empty False Nothing) $ stoerungenF

@@ -32,6 +32,7 @@ import Control.Monad.Writer.Lazy
 import Data.Aeson
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Data.Text.Lazy (unpack)
+import GHC.Generics
 
 logSourceDeviceRunner :: LogSource
 logSourceDeviceRunner = "DeviceRunner"
@@ -84,18 +85,18 @@ debugDevices devices = liftIO $ do
         putStrLn $ color Green $ "        Continuations: " <> show (deviceContinuations d)
         ) devices
 
-processDevice :: (Show s) => Int -> DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
+processDevice :: (Show s, ToJSON s) => Int -> DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
 processDevice deviceId input device = do
     (device', log) <- runWriterT $ processDeviceInput input device
 
-    handleLog deviceId (deviceName device) log
+    handleLog deviceId (deviceName device) log (deviceState device')
 
     return device'
 
-handleLog :: Int -> String -> [Value] -> DeviceRunnerT ()
-handleLog deviceId deviceName log = do
+handleLog :: (ToJSON s) => Int -> String -> [Value] -> s -> DeviceRunnerT ()
+handleLog deviceId deviceName log state = do
     unless (null log) $ do
-        let log' = object [ "deviceId" .= deviceId, "deviceName" .= deviceName, "log" .= log ]
+        let log' = object [ "deviceId" .= deviceId, "deviceName" .= deviceName, "log" .= log, "state" .= state ]
         logInfoNS logSourceDeviceRunner . pack . unpack . decodeUtf8 . encode $ log'
 
 filterF :: DeviceInput -> Continuation s -> Bool

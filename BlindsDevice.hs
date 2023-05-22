@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric #-}
+
 module BlindsDevice
     ( BlindsConfig (..)
     , makeBlindsDevice
@@ -11,6 +13,8 @@ import Data.Time.Clock
 import Data.Time.LocalTime
 import Data.Maybe
 import Control.Monad
+import GHC.Generics
+import Data.Aeson
 
 data BlindsConfig = BlindsConfig
     { upDownGA :: GroupAddress
@@ -23,14 +27,18 @@ data BlindsConfig = BlindsConfig
     , motorStartDelay :: NominalDiffTime
     } deriving (Show)
 
-data BlindState = Idle | MovingUp | MovingDown deriving (Show)
+data BlindState = Idle | MovingUp | MovingDown deriving (Show, Generic)
+
+instance ToJSON BlindState
 
 data BlindsState = BlindsState
     { position :: Double
     , blindState :: BlindState
     , lastMove :: Maybe UTCTime
     , timerId :: Maybe TimerId
-    } deriving (Show)
+    } deriving (Show, Generic)
+
+instance ToJSON BlindsState
 
 initialBlindsState = BlindsState
     { position = 0

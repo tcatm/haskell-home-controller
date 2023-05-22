@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module KNXAddress
     ( KNXAddress (..)
     , parseKNXAddress
@@ -14,12 +17,19 @@ import Data.Word
 import Data.List.Split (splitOn)
 import Text.Read (readMaybe)
 import Text.Printf (printf)
+import qualified Data.Text as T
+import Data.Aeson
+import Data.Aeson.Encoding (text)
+import GHC.Generics
 
 data KNXAddress = KNXAddress
     { mainKA :: Int
     , middleKA :: Int
     , subKA :: Int
-    } deriving (Ord, Eq)
+    } deriving (Ord, Eq, Generic)
+
+instance ToJSON KNXAddress where
+  toJSON (KNXAddress main middle sub) = toJSON $ showTriplet main middle sub '.'
 
 showTriplet :: Int -> Int -> Int -> Char -> String
 showTriplet main middle sub sep = printf "%d%c%d%c%d" main sep middle sep sub
@@ -36,7 +46,10 @@ data GroupAddress = GroupAddress
     { mainGA :: Int
     , middleGA :: Int
     , subGA :: Int
-    } deriving (Ord, Eq)
+    } deriving (Ord, Eq, Generic)
+
+instance ToJSON GroupAddress where
+  toJSON (GroupAddress main middle sub) = toJSON $ showTriplet main middle sub '/'
 
 instance Show GroupAddress where
   show (GroupAddress main middle sub) = "GroupAddress " <> showTriplet main middle sub '/'
@@ -45,6 +58,11 @@ instance Read GroupAddress where
   readsPrec _ str = case parseGroupAddressStr str of
     Just ga -> [(ga, "")]
     Nothing -> []
+
+instance ToJSONKey GroupAddress where
+  toJSONKey = ToJSONKeyText -- This specifies that we're producing a Text key
+    (\(GroupAddress main middle sub) -> T.pack $ showTriplet main middle sub '/') -- This is the conversion function
+    (text . (\(GroupAddress main middle sub) -> T.pack $ showTriplet main middle sub '/')) -- This is used for `aeson >= 0.11`
 
 conv :: Int -> Int -> Int -> Int -> Int -> Word16
 conv s1 s2 mainG middleG subG = fromIntegral $ (mainG `shiftL` s1) + (middleG `shiftL` s2) + subG
