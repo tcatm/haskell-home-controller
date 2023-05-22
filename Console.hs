@@ -2,7 +2,7 @@ module Console
     ( stdinLoop
     ) where
 
-import KNX
+import KNX (sendMessage)
 import KNXAddress
 import KNXMessages
 import DPTs
@@ -11,10 +11,10 @@ import System.IO
 import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.IO.Class
+import Control.Concurrent.STM
 
-stdinLoop :: KNXM ()
-stdinLoop =
-  forever $ do
+stdinLoop :: TQueue GroupMessage -> LoggingT IO ()
+stdinLoop knx = forever $ do
   line <- liftIO $ hGetLine stdin
   liftIO $ putStrLn $ "Received from stdin: " <> line
   -- Parse "1/2/3 0 0 0 ..." to KNXAdress + List of integers
@@ -23,7 +23,8 @@ stdinLoop =
     Just (groupAddress, dpt) -> do
       -- Do something with the parsed values
       liftIO $ putStrLn $ "Parsed: " <> show groupAddress <> " " <> show dpt
-      emit $ GroupValueWrite groupAddress dpt
+      -- Send a GroupValueWrite to the KNX bus
+      liftIO $ sendMessage knx $ GroupValueWrite groupAddress dpt
       return ()
     Nothing -> liftIO $ putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 

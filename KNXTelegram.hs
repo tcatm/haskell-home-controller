@@ -1,9 +1,11 @@
 module KNXTelegram
     ( KNXTelegram (..)
+    , composeTelegram
     ) where
 
 import APDU
 import KNXAddress
+import DPTs
 
 import Data.Binary
 import Data.Binary.Get
@@ -36,3 +38,18 @@ instance Binary KNXTelegram where
         putWord8 $ messageCode telegram
         putWord16be $ encodeGroupAddress $ dstField telegram
         putLazyByteString $ encode $ apdu telegram
+
+composeTelegram :: ACPI -> GroupAddress -> Maybe DPT -> KNXTelegram
+composeTelegram apci groupAddress mdpt =
+    KNXTelegram  { messageCode = 39
+                 , srcField = Nothing
+                 , dstField = groupAddress
+                 , apdu = APDU   { tpci = 0x00
+                                 , apci = apci
+                                 , APDU.payload = payload
+                                 }
+                 }
+    where
+        payload = case mdpt of
+            Just dpt -> encodeDPT dpt
+            Nothing -> EncodedDPT (LBS.pack [0]) True

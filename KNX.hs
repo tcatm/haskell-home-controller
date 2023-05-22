@@ -3,15 +3,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module KNX 
-    ( connectKnx
-    , disconnectKnx
-    , runKnxLoop
-    , KNXConnection (..)
+    ( createKNXContext
+    , runKnx
     , KNXCallback (..)
-    , KNXM (..)
-    , runKNX
+    , KNXContext (..)
     , logSourceKNX
-    , emit
+    , sendMessage
     ) where
 
 import APDU
@@ -36,31 +33,34 @@ import Control.Monad.Trans.Class
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Reader
 import Control.Monad.Logger
+import Control.Concurrent.STM
+import Control.Concurrent.Async (async, wait)
 import Data.Conduit hiding (connect)
+import qualified Data.Conduit.Network as CN
 import qualified Data.Conduit.List as CL
+import Data.Text (Text)
 
 logSourceKNX :: LogSource
 logSourceKNX = "KNX"
 
-eibOpenGroupcon = 0x26
-
 newtype KNXCallback = KNXCallback (IncomingMessage -> IO ())
 
-newtype KNXM a = KNXM { runKNXM :: ReaderT KNXConnection (LoggingT IO) a }
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadLogger)
+type KNXCtxM = ReaderT KNXContext (LoggingT IO)
+type KNXStateM = StateT KNXState KNXCtxM
 
-runKNX :: KNXConnection -> KNXM a -> (LoggingT IO) a
-runKNX knx = flip runReaderT knx . runKNXM
-
-data KNXConnection = KNXConnection
-    { host :: HostName
-    , port :: ServiceName
-    , sock :: Socket
-    , callback :: KNXCallback
+data KNXState = KNXState
+    { sock :: Socket
     }
 
-hexWithSpaces :: LBS.ByteString -> String
-hexWithSpaces = unwords . map (printf "%02x") . LBS.unpack
+data KNXContext = KNXContext
+    { host :: HostName
+    , port :: ServiceName
+    , callback :: KNXCallback
+    , sendQueue :: TQueue GroupMessage
+    }
+
+hexWithSpaces :: LBS.ByteString -> Text
+hexWithSpaces = pack . concatMap (printf "%02x ") . LBS.unpack
 
 createTCPConnection :: HostName -> ServiceName -> IO Socket
 createTCPConnection host port = do
@@ -70,32 +70,40 @@ createTCPConnection host port = do
     connect sock (addrAddress serverAddr)
     return sock
 
-connectKnx :: HostName -> ServiceName -> KNXCallback -> (LoggingT IO) KNXConnection
-connectKnx host port cb = do
+createKNXContext :: HostName -> ServiceName -> KNXCallback -> LoggingT IO KNXContext
+createKNXContext host port cb = do
+    sendQueue <- liftIO $ newTQueueIO
+    return KNXContext
+                { host = host
+                , port = port
+                , callback = cb
+                , sendQueue = sendQueue
+                }
+
+connectKnx :: KNXCtxM (Socket)
+connectKnx = do
+    host <- asks host
+    port <- asks port
+
     sock <- liftIO $ createTCPConnection host port
+
     -- send eibOpenGroupcon
     let message = composeMessage eibOpenGroupconMessage
-    _ <- liftIO $ send sock (LBS.toStrict message)
-    logInfoNS logSourceKNX . pack $ "Connected to KNX gateway."
-    return KNXConnection { host = host, port = port, sock = sock, callback = cb }
+    liftIO $ send sock (LBS.toStrict message)
 
-disconnectKnx :: KNXM ()
-disconnectKnx = KNXM $ do
-    knx <- ask
-    liftIO $ close (sock knx)
+    -- FIXME - check response
+    logInfoNS logSourceKNX . pack $ "Connected to KNX gateway."
+
+    return sock
+
+disconnectKnx :: KNXStateM ()
+disconnectKnx =  do
+    sock <- gets sock
+    liftIO $ close sock
     logInfoNS logSourceKNX . pack $ "Disconnected from KNX gateway."
     return ()
 
-sourceSocket :: Socket -> ConduitT () BS.ByteString KNXM ()
-sourceSocket sock = loop where
-    loop = do
-        bs <- liftIO $ recv sock 1024
-        case BS.length bs of
-            -- If we get an empty bytestring, the socket is closed.
-            0 -> return ()
-            _ -> yield bs >> loop
-
-messageChunks :: ConduitT BS.ByteString BS.ByteString KNXM ()
+messageChunks :: (Monad m) => ConduitT BS.ByteString BS.ByteString m ()
 messageChunks = loop BS.empty
     where
         loop buffer = do
@@ -116,48 +124,76 @@ messageChunks = loop BS.empty
                         yield msg  -- We have a complete message, yield it and continue with the remaining buffer
                         processBuffer buffer'
 
-runKnxLoop :: KNXM ()
+runKnx :: KNXContext -> LoggingT IO ()
+runKnx ctx = runReaderT runKnxLoop ctx
+
+runKnxLoop :: KNXCtxM ()
 runKnxLoop = do
     logInfoNS logSourceKNX . pack $ "Starting KNX loop"
-    knx <- KNXM ask
-    runConduit $ sourceSocket (sock knx) .| messageChunks .| CL.mapM_ processMessage
+
+    sock <- connectKnx
+
+    evalStateT knxLoop $ KNXState sock
+
+runKNXStateM :: (Loc -> LogSource -> LogLevel -> LogStr -> IO ()) -> KNXState -> KNXContext -> KNXStateM () -> IO ()
+runKNXStateM logger state ctx m = do
+    runLoggingT (runReaderT (evalStateT m state) ctx) logger
+
+knxLoop :: KNXStateM ()
+knxLoop = do
+    cb <- lift $ asks callback
+    queue <- lift $ asks sendQueue
+
+    let inputConduit sock = recvConduit sock .| CL.mapM_ handleTelegram
+    let queueConduit = sourceTQueue queue .| CL.mapM_ handleQueue
+    
+    logInfoNS logSourceKNX . pack $ "Starting input conduit"
+
+    ctx <- lift $ ask
+    state <- get
+    logger <- askLoggerIO
+    
+    a1 <- liftIO $ async $ do
+        runKNXStateM logger state ctx $ do
+            sock <- gets sock
+            runConduit (inputConduit sock)
+
+    logInfoNS logSourceKNX . pack $ "Starting queue conduit"
+
+    a2 <- liftIO $ async $ do
+        runKNXStateM logger state ctx $ forever $ runConduit queueConduit
+        putStrLn "Queue conduit finished"
+
+    liftIO $ wait a1
+
     logErrorNS logSourceKNX . pack $ "Socket closed, exiting KNX loop"
 
-processMessage :: BS.ByteString -> KNXM ()
-processMessage msg = do
-    let telegram = parseMessage $ LBS.fromStrict msg
-    case telegram of
-        Left err -> logWarnNS logSourceKNX . pack $ "Error parsing message: " <> err
-        Right msg -> processTelegram msg
+handleQueue :: GroupMessage -> KNXStateM ()
+handleQueue msg = do
+    logDebugNS logSourceKNX . pack $ "Sending message: " <> show msg
+    sendGroupMessage msg
 
-processTelegram :: IncomingMessage -> KNXM ()
+handleTelegram :: BS.ByteString -> KNXStateM ()
+handleTelegram bs = do
+    let msg = parseMessage $ LBS.fromStrict bs
+    logDebugNS logSourceKNX $ "Received message: " <> hexWithSpaces (LBS.fromStrict bs)
+    case msg of
+        Left err -> logErrorNS logSourceKNX . pack $ "Error parsing message: " <> err
+        Right msg -> lift $ processTelegram msg
+
+sourceTQueue :: MonadIO m => TQueue a -> ConduitT i a m ()
+sourceTQueue queue = forever $ do
+    msg <- liftIO $ atomically $ readTQueue queue
+    yield msg
+
+recvConduit :: (MonadIO m) => Socket -> ConduitT () BS.ByteString m ()
+recvConduit sock = CN.sourceSocket sock .| messageChunks
+
+processTelegram :: IncomingMessage -> KNXCtxM ()
 processTelegram msg = do
     logDebugNS logSourceKNX . pack $ "Received message: " <> show msg
-    KNXCallback cb' <- KNXM $ asks callback
+    KNXCallback cb' <- asks callback
     liftIO $ cb' msg
-
-parseMessage :: LBS.ByteString -> Either String IncomingMessage
-parseMessage msg = do
-    let messageCode = runGet getWord16be msg
-    case messageCode of
-        0x27 -> do
-            let telegram = B.decode msg :: KNXTelegram
-                apci = APDU.apci $ apdu telegram
-                groupAddress = dstField telegram
-                payload' = payload $ apdu telegram
-
-            case apci of
-                ACPIGroupValueRead      -> Right $ IncomingGroupValueRead groupAddress
-                ACPIGroupValueResponse  -> Right $ IncomingGroupValueResponse groupAddress payload'
-                ACPIGroupValueWrite     -> Right $ IncomingGroupValueWrite groupAddress payload'
-                _ -> Left $ "Received unknown APDU: " <> show (apdu telegram)
-        _   -> Left $ "Received unknown message code: " <> show messageCode
-
-eibOpenGroupconMessage :: Put
-eibOpenGroupconMessage = do
-    putWord16be $ fromIntegral eibOpenGroupcon
-    putWord16be 0
-    putWord8 0
 
 composeMessage :: Put -> LBS.ByteString
 composeMessage msg = runPut $ do
@@ -168,46 +204,32 @@ composeMessage msg = runPut $ do
     where
         msg' = runPut msg
 
-sendTelegram :: KNXTelegram -> KNXM ()
+sendTelegram :: KNXTelegram -> KNXStateM ()
 sendTelegram telegram = do
-    knx <- KNXM ask
+    sock <- gets sock
     let msg = composeMessage $ B.put telegram
-    logDebugNS logSourceKNX . pack $ "Sending: " <> hexWithSpaces msg
-    _ <- liftIO $ send (sock knx) (LBS.toStrict msg)
+    logDebugNS logSourceKNX $ "Sending: " <> hexWithSpaces msg
+    _ <- liftIO $ send sock (LBS.toStrict msg)
 
     -- Echo the message back to the callback
-    case apci $ apdu telegram of
+    lift $ case apci $ apdu telegram of
         ACPIGroupValueRead      -> processTelegram $ IncomingGroupValueRead (dstField telegram)
         ACPIGroupValueResponse  -> processTelegram $ IncomingGroupValueResponse (dstField telegram) (payload $ apdu telegram)
         ACPIGroupValueWrite     -> processTelegram $ IncomingGroupValueWrite (dstField telegram) (payload $ apdu telegram)
         _    -> return ()
 
-    return ()
-
-composeTelegram :: ACPI -> GroupAddress -> Maybe DPT -> KNXTelegram
-composeTelegram apci groupAddress mdpt =
-    KNXTelegram  { messageCode = 39
-                 , srcField = Nothing
-                 , dstField = groupAddress
-                 , apdu = APDU   { tpci = 0x00
-                                 , apci = apci
-                                 , APDU.payload = payload
-                                 }
-                 }
-    where
-        payload = case mdpt of
-            Just dpt -> encodeDPT dpt
-            Nothing -> EncodedDPT (LBS.pack [0]) True
-
-emit :: GroupMessage -> KNXM ()
-emit (GroupValueWrite groupAddress dpt) = do
+sendGroupMessage :: GroupMessage -> KNXStateM ()
+sendGroupMessage (GroupValueWrite groupAddress dpt) = do
     logDebugNS logSourceKNX . pack $ "Writing " <> show dpt <> " to " <> show groupAddress
     sendTelegram $ composeTelegram ACPIGroupValueWrite groupAddress (Just dpt)
 
-emit (GroupValueRead groupAddress) = do
+sendGroupMessage (GroupValueRead groupAddress) = do
     logDebugNS logSourceKNX . pack $ "Reading from " <> show groupAddress
     sendTelegram $ composeTelegram ACPIGroupValueRead groupAddress Nothing
 
-emit (GroupValueResponse groupAddress dpt) = do
+sendGroupMessage (GroupValueResponse groupAddress dpt) = do
     logDebugNS logSourceKNX . pack $ "Responding to " <> show groupAddress <> " with " <> show dpt
     sendTelegram $ composeTelegram ACPIGroupValueResponse groupAddress (Just dpt)
+
+sendMessage :: TQueue GroupMessage -> GroupMessage -> IO ()
+sendMessage queue msg = atomically $ writeTQueue queue $ msg

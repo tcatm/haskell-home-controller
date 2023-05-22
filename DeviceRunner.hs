@@ -7,9 +7,8 @@ module DeviceRunner
     , logSourceDeviceRunner
     ) where
 
-import KNX hiding (groupWrite, groupRead)
+import KNX (sendMessage)
 import KNXMessages
-import qualified KNX as KNX
 import DPTs
 import Device hiding (gets, modify)
 import Control.Monad
@@ -38,16 +37,26 @@ data DeviceInput    = StartDevice
                     | TimerEvent TimerId UTCTime
                     deriving (Show)
 
-type DeviceRunnerT = ReaderT (TChan DeviceInput) KNXM
+type DeviceRunnerT = ReaderT DeviceRunnerContext (LoggingT IO)
 type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
 
-runDevices :: [Device] -> TChan DeviceInput -> KNXM ()
-runDevices devices deviceInput = 
-    runReaderT (deviceRunner devices) deviceInput
+data DeviceRunnerContext = DeviceRunnerContext
+    { deviceRunnerInputChan :: TChan DeviceInput
+    , deviceRunnerKNXQueue :: TQueue GroupMessage
+    }
+
+runDevices :: [Device] -> TChan DeviceInput -> TQueue GroupMessage -> LoggingT IO ()
+runDevices devices deviceInput knxQueue = do
+    let ctx = DeviceRunnerContext 
+                { deviceRunnerInputChan = deviceInput
+                , deviceRunnerKNXQueue = knxQueue
+                }
+
+    runReaderT (deviceRunner devices) ctx
 
 deviceRunner :: [Device] -> DeviceRunnerT ()
 deviceRunner devices = do
-    inputChan <- ask
+    inputChan <- asks deviceRunnerInputChan
     devices' <- mapDevices StartDevice devices
 
     let loop devices'' = do
@@ -185,12 +194,12 @@ performDeviceAction (Log msg) = do
 
 performDeviceAction (GroupWrite ga dpt) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueWrite " <> show dpt <> " to " <> show ga
-    lift $ lift $ KNX.emit $ GroupValueWrite ga dpt
+    lift $ sendKNXMessage $ GroupValueWrite ga dpt
     return Nothing
 
 performDeviceAction (GroupRead ga) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueRead from " <> show ga
-    lift $ lift $ KNX.emit $ GroupValueRead ga
+    lift $ sendKNXMessage $ GroupValueRead ga
     return Nothing
 
 performDeviceAction (Defer continuation) = do
@@ -205,7 +214,7 @@ performDeviceAction (Defer continuation) = do
             return $ Just continuation
 
         ScheduledContinuation timerId time device -> do
-            inputChan <- lift $ ask
+            inputChan <- lift $ asks deviceRunnerInputChan
             threadId <- liftIO $ forkIO $ do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
@@ -225,3 +234,8 @@ performDeviceAction (CancelTimer timerId) = do
         liftIO $ killThread $ fromJust threadId
 
     return Nothing
+
+sendKNXMessage :: GroupMessage -> DeviceRunnerT ()
+sendKNXMessage msg = do
+    queue <- asks deviceRunnerKNXQueue
+    liftIO $ sendMessage queue msg

@@ -46,13 +46,13 @@ logFilter _ _ = True
 main :: IO ()
 main = runStdoutLoggingT $ filterLogger logFilter $ do
   deviceInput <- liftIO $ newTChanIO
-  knx <- connectKnx knxGatewayHost knxGatewayPort (knxCallback deviceInput)
-
+  knxContext <- createKNXContext knxGatewayHost knxGatewayPort (knxCallback deviceInput)
+  
   let devices = Elphi.devices
 
-  let actions = [ runKNX knx $ runKnxLoop 
-                , runKNX knx $ stdinLoop
-                , runKNX knx $ runDevices devices deviceInput
+  let actions = [ runKnx knxContext
+                , stdinLoop (sendQueue knxContext)
+                , runDevices devices deviceInput (sendQueue knxContext)
                 ]
 
   waitAllThreads actions

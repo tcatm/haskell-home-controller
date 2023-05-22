@@ -4,6 +4,8 @@ packages = \
 	-package network \
 	-package pretty-show \
 	-package conduit \
+	-package async \
+	-package conduit-extra \
 	-package stm
 
 sources = \
