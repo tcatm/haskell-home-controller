@@ -50,17 +50,33 @@ blindsConfigKitchen = BlindsConfig
     , motorStartDelay = 3
     }
 
-presenceDevice :: Device
-presenceDevice = makeDevice "Anwesenheit" Nothing presenceDeviceF
 
-presenceDeviceF :: DeviceM (Maybe TimerId) ()
+data PresenceDeviceState = PresenceDeviceState
+    { presence :: Maybe Bool
+    , presenceTimer :: Maybe TimerId
+    } deriving (Show)
+
+presenceDeviceInitialState = PresenceDeviceState
+    { presence = Nothing
+    , presenceTimer = Nothing
+    }
+
+presenceDevice :: Device
+presenceDevice = makeDevice "Anwesenheit" presenceDeviceInitialState presenceDeviceF
+
+presenceDeviceF :: DeviceM PresenceDeviceState ()
 presenceDeviceF = do
     let presenceGA = GroupAddress 0 1 12
+
+    respondOnRead presenceGA $ fmap DPT1 <$> gets presence
+
     watchDPT1 presenceGA $ \presence -> do
         debug $ "Presence: " <> show presence
         case presence of
             True -> enablePresence
             False -> disablePresence
+
+        modify $ \s -> s { presence = Just presence }
 
 enablePresence = do
     groupWrite (GroupAddress 1 0 1) (DPT1 True)     -- Rückmeldung Anwesenheit
@@ -68,11 +84,11 @@ enablePresence = do
     groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeAuto)    -- Betriebsmodus Wohnung (HVAC) auf Auto
     groupWrite (GroupAddress 3 0 5) (DPT5_1 0.4)    -- Volumenstrom auf 40%
     
-    timerId <- gets id
+    timerId <- gets presenceTimer
     case timerId of
         Just timerId -> do 
             cancelTimer timerId
-            modify $ const Nothing
+            modify $ \s -> s { presenceTimer = Nothing }
         Nothing -> return ()
 
 disablePresence = do
@@ -91,7 +107,7 @@ disablePresence = do
     timerId <- scheduleIn timerDelay $ do
         groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeStandby)    -- Betriebsmodus Wohnung (HVAC) auf Standby
 
-    modify $ const $ Just timerId
+    modify $ \s -> s { presenceTimer = Just timerId }
 
 meanTemperatureWohnzimmer :: Device
 meanTemperatureWohnzimmer = makeDevice "Mittelwert Temperatur Wohnzimmer" Map.empty $ meanTemperatureDevice addresses $ GroupAddress 3 2 2

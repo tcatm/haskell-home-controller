@@ -13,12 +13,15 @@ module Device
     , debug
     , groupWrite
     , groupRead
-    , groupValue
+    , onGroupValue
+    , onGroupRead
+    , groupResponse
     , scheduleAt
     , scheduleIn
     , cancelTimer
     , getTime
     , eventLoop
+    , respondOnRead
     , watchDPT1
     , watchDPT5
     , watchDPT5_1
@@ -49,14 +52,17 @@ newtype TimerId = TimerId Int deriving (Eq, Ord, Show)
 
 data Continuation s = StartContinuation (DeviceM s ())
                     | GroupValueContinuation GroupAddress (Get DPT) (DPT -> DeviceM s ())
+                    | GroupReadContinuation GroupAddress (DeviceM s ())
                     | ScheduledContinuation TimerId UTCTime (DeviceM s ())
 
 instance Show (Continuation s) where
     show (StartContinuation _) = "StartContinuation"
     show (GroupValueContinuation ga _ _) = "GroupValueContinuation " <> show ga
+    show (GroupReadContinuation ga _) = "GroupReadContinuation " <> show ga
     show (ScheduledContinuation timerId time _) = "ScheduledContinuation " <> show timerId <> " " <> show time
 
 data Action s   = GroupWrite GroupAddress DPT
+                | GroupResponse GroupAddress DPT
                 | GroupRead GroupAddress
                 | Defer (Continuation s)
                 | Log String
@@ -64,6 +70,7 @@ data Action s   = GroupWrite GroupAddress DPT
 
 instance Show (Action s) where
     show (GroupWrite ga dpt) = "GroupWrite " <> show ga <> " " <> show dpt
+    show (GroupResponse ga dpt) = "GroupResponse " <> show ga <> " " <> show dpt
     show (GroupRead ga) = "GroupRead " <> show ga
     show (Defer c) = "Defer " <> show c
     show (Log msg) = "Log " <> msg
@@ -105,21 +112,28 @@ modify f = DeviceM $ \(time, s) -> ((), f s, [])
 debug :: String -> DeviceM s ()
 debug msg = DeviceM $ \(time, s) -> ((), s, [Log msg])
 
-groupWrite :: GroupAddress -> DPT -> DeviceM s ()
-groupWrite ga dpt = DeviceM $ \(time, s) -> ((), s, [action])
-    where
-        action = GroupWrite ga dpt
-
 action :: Action s -> DeviceM s ()
 action a = DeviceM $ \(time, s) -> ((), s, [a])
-
--- | Wait for a group value to be received. The parser is used to parse the value from the bus.
-groupValue :: GroupAddress -> (Get DPT) -> (DPT -> DeviceM s ()) -> DeviceM s ()
-groupValue ga parser cont = action $ Defer $ GroupValueContinuation ga parser cont
 
 -- | Trigger a group read. Use before groupValue to request a value from the bus instead of waiting for it to be sent.
 groupRead :: GroupAddress -> DeviceM s ()
 groupRead ga = action $ GroupRead ga
+
+-- | Write a group value to the bus.
+groupWrite :: GroupAddress -> DPT -> DeviceM s ()
+groupWrite ga dpt = action $ GroupWrite ga dpt
+
+-- | Respond to a group value request.
+groupResponse :: GroupAddress -> DPT -> DeviceM s ()
+groupResponse ga dpt = action $ GroupResponse ga dpt
+
+-- | Wait for a group value to be received. The parser is used to parse the value from the bus.
+onGroupValue :: GroupAddress -> (Get DPT) -> (DPT -> DeviceM s ()) -> DeviceM s ()
+onGroupValue ga parser cont = action $ Defer $ GroupValueContinuation ga parser cont
+
+-- | Wait for a group read request to be received.
+onGroupRead :: GroupAddress -> DeviceM s () -> DeviceM s ()
+onGroupRead ga cont = action $ Defer $ GroupReadContinuation ga cont
 
 -- | Schedule an action to be run at a specific time.
 scheduleAt :: UTCTime -> DeviceM s () -> DeviceM s (TimerId)
@@ -149,20 +163,33 @@ eventLoop f h = f $ \a -> do
     h a
     eventLoop f h
 
+eventLoop' :: (DeviceM s () -> DeviceM s ()) -> DeviceM s () -> DeviceM s ()
+eventLoop' f h = f $ do
+    h
+    eventLoop' f h
+
+-- | Respond to a group read request with a value from a handler.
+respondOnRead :: GroupAddress -> DeviceM s (Maybe DPT) -> DeviceM s ()
+respondOnRead ga handler = eventLoop' (onGroupRead ga) $ do
+    value <- handler
+    case value of
+        Just value -> groupResponse ga value
+        Nothing -> return ()
+
 watchDPT1 :: GroupAddress -> (Bool -> DeviceM s ()) -> DeviceM s ()
-watchDPT1 ga handler = eventLoop (groupValue ga getDPT1) $ \(DPT1 val) -> handler val
+watchDPT1 ga handler = eventLoop (onGroupValue ga getDPT1) $ \(DPT1 val) -> handler val
 
 watchDPT5 :: GroupAddress -> (Word8 -> DeviceM s ()) -> DeviceM s ()
-watchDPT5 ga handler = eventLoop (groupValue ga getDPT5) $ \(DPT5 val) -> handler val
+watchDPT5 ga handler = eventLoop (onGroupValue ga getDPT5) $ \(DPT5 val) -> handler val
 
 watchDPT5_1 :: GroupAddress -> (Double -> DeviceM s ()) -> DeviceM s ()
-watchDPT5_1 ga handler = eventLoop (groupValue ga getDPT5_1) $ \(DPT5_1 val) -> handler val
+watchDPT5_1 ga handler = eventLoop (onGroupValue ga getDPT5_1) $ \(DPT5_1 val) -> handler val
 
 watchDPT9 :: GroupAddress -> (Double -> DeviceM s ()) -> DeviceM s ()
-watchDPT9 ga handler = eventLoop (groupValue ga getDPT9) $ \(DPT9 val) -> handler val
+watchDPT9 ga handler = eventLoop (onGroupValue ga getDPT9) $ \(DPT9 val) -> handler val
 
 watchDPT18_1 :: GroupAddress -> ((Bool, Int) -> DeviceM s ()) -> DeviceM s ()
-watchDPT18_1 ga handler = eventLoop (groupValue ga getDPT18_1) $ \(DPT18_1 (val1, val2)) -> handler (val1, val2)
+watchDPT18_1 ga handler = eventLoop (onGroupValue ga getDPT18_1) $ \(DPT18_1 (val1, val2)) -> handler (val1, val2)
 
 watchDPT20_102 :: GroupAddress -> (KNXHVACMode -> DeviceM s ()) -> DeviceM s ()
-watchDPT20_102 ga handler = eventLoop (groupValue ga getDPT20_102) $ \(DPT20_102 val) -> handler val
+watchDPT20_102 ga handler = eventLoop (onGroupValue ga getDPT20_102) $ \(DPT20_102 val) -> handler val

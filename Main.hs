@@ -73,7 +73,7 @@ sampleDeviceF = do
     groupAddressA = GroupAddress 0 0 1
     groupAddressB = GroupAddress 0 0 2
 
-    readAndTry ga = eventLoop (groupValue ga getDPT6) $ \(DPT6 a) -> do
+    readAndTry ga = eventLoop (onGroupValue ga getDPT6) $ \(DPT6 a) -> do
         debug $ "Read " <> show a <> " from " <> show ga
         modify $ Map.insert ga $ fromIntegral a
         tryBoth

@@ -105,7 +105,10 @@ filterKNXMessage (IncomingGroupValueResponse ga _) c =
         GroupValueContinuation ga' _ _ -> ga' == ga
         _ -> False
 
-filterKNXMessage _ _ = False
+filterKNXMessage (IncomingGroupValueRead ga) c =
+    case c of
+        GroupReadContinuation ga' _ -> ga' == ga
+        _ -> False
 
 processDeviceInput :: (Show s) => DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
 processDeviceInput input device = do
@@ -154,11 +157,12 @@ performContinuation (TimerEvent timerId _) state c@(ScheduledContinuation _ _ de
     runDeviceWithEffects state c device
 
 performContinuationKNX :: (Show s) => IncomingMessage -> s -> Continuation s -> TimerT ([Continuation s], s)
-performContinuationKNX (IncomingGroupValueWrite ga payload) = handleKNX payload
-performContinuationKNX (IncomingGroupValueResponse ga payload) = handleKNX payload
+performContinuationKNX (IncomingGroupValueWrite ga payload) = handleKNXValue payload
+performContinuationKNX (IncomingGroupValueResponse ga payload) = handleKNXValue payload
+performContinuationKNX (IncomingGroupValueRead ga) = handleKNXread
 
-handleKNX :: (Show s) => EncodedDPT -> s -> Continuation s -> TimerT ([Continuation s], s)
-handleKNX payload state c@(GroupValueContinuation ga parser device) = do
+handleKNXValue :: (Show s) => EncodedDPT -> s -> Continuation s -> TimerT ([Continuation s], s)
+handleKNXValue payload state c@(GroupValueContinuation ga parser device) = do
     case runGetOrFail parser (encodedDPT payload) of
         Left (_, _, err) -> do
             logWarnNS logSourceDeviceRunner . pack $ color Red $ "    Error parsing DPT: " <> err
@@ -171,6 +175,12 @@ handleKNX payload state c@(GroupValueContinuation ga parser device) = do
             logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Received " <> show dpt <> " at " <> show ga
 
             runDeviceWithEffects state c (device dpt)
+
+handleKNXread :: (Show s) => s -> Continuation s -> TimerT ([Continuation s], s)
+handleKNXread state c@(GroupReadContinuation ga device) = do
+    logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Received read request at " <> show ga
+
+    runDeviceWithEffects state c device
 
 runDeviceWithEffects :: (Show s) => s -> Continuation s -> DeviceM s () -> TimerT ([Continuation s], s)
 runDeviceWithEffects state c device = do
@@ -197,6 +207,11 @@ performDeviceAction (GroupWrite ga dpt) = do
     lift $ sendKNXMessage $ GroupValueWrite ga dpt
     return Nothing
 
+performDeviceAction (GroupResponse ga dpt) = do
+    logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueResponse " <> show dpt <> " to " <> show ga
+    lift $ sendKNXMessage $ GroupValueResponse ga dpt
+    return Nothing
+
 performDeviceAction (GroupRead ga) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueRead from " <> show ga
     lift $ sendKNXMessage $ GroupValueRead ga
@@ -211,6 +226,9 @@ performDeviceAction (Defer continuation) = do
             return Nothing
 
         GroupValueContinuation ga _ _ -> do
+            return $ Just continuation
+
+        GroupReadContinuation ga _ -> do
             return $ Just continuation
 
         ScheduledContinuation timerId time device -> do
