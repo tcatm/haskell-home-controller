@@ -1,22 +1,26 @@
 module Main where
 
-import KNXAddress
-import KNX hiding (groupWrite, groupRead)
-import DPTs
-import Device
+import KNX
 import DeviceRunner
 import Console
 import Webinterface
+import Config
 
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad.IO.Class
 import Control.Monad.Logger
-import qualified Data.Map as Map
+import Control.Monad
+import Data.Maybe
+import System.Environment (getArgs)
 
-import StaircaseLight
-import BlindsDevice
 import qualified ElphiWohnung as Elphi
+import qualified FM2 as FM2
+
+getConfig :: String -> Config
+getConfig "FM2" = FM2.config
+getConfig "Elphi" = Elphi.config
+getConfig _ = error "Invalid configuration name"
 
 knxGatewayHost = "localhost"
 knxGatewayPort = "6720"
@@ -45,53 +49,23 @@ logFilter logSourceKNX LevelDebug = False
 logFilter _ _ = True
 
 main :: IO ()
-main = runStdoutLoggingT $ filterLogger logFilter $ do
-  deviceInput <- liftIO $ newTChanIO
-  knxContext <- createKNXContext knxGatewayHost knxGatewayPort (knxCallback deviceInput)
+main = do
+  args <- getArgs
+  let mConfig = case args of
+        [configName] -> Just $ getConfig configName
+        _ -> error "Usage: knx-hs <config>"
+
+  unless (isNothing mConfig) $ do
+    let Just config = mConfig
   
-  let devices = Elphi.devices
+    runStdoutLoggingT $ filterLogger logFilter $ do
+      deviceInput <- liftIO $ newTChanIO
+      knxContext <- createKNXContext knxGatewayHost knxGatewayPort (knxCallback deviceInput)
+      
+      let actions = [ runKnx knxContext
+                    , stdinLoop (sendQueue knxContext)
+                    , runDevices (devices config) deviceInput (sendQueue knxContext)
+                    , runWebinterface
+                    ]
 
-  let actions = [ runKnx knxContext
-                , stdinLoop (sendQueue knxContext)
-                , runDevices devices deviceInput (sendQueue knxContext)
-                , runWebinterface
-                ]
-
-  waitAllThreads actions
-
--- | This device reads two group addresses and prints their sum after both have been read.
--- | When a new value is read from either group address, the sum is recalculated.
-sampleDevice :: Device
-sampleDevice = makeDevice "Sample Device" Map.empty sampleDeviceF
-
-sampleDeviceF :: DeviceM (Map.Map GroupAddress Int) ()
-sampleDeviceF = do
-  time <- getTime
-  debug $ "Time: " <> show time
-  readAndTry groupAddressA
-  readAndTry groupAddressB
-  
-  where
-    groupAddressA = GroupAddress 0 0 1
-    groupAddressB = GroupAddress 0 0 2
-
-    readAndTry ga = eventLoop (onGroupValue ga getDPT6) $ \(DPT6 a) -> do
-        debug $ "Read " <> show a <> " from " <> show ga
-        modify $ Map.insert ga $ fromIntegral a
-        tryBoth
-
-    tryBoth = do
-      a <- gets $ Map.lookup groupAddressA
-      b <- gets $ Map.lookup groupAddressB
-      case (a, b) of
-        (Just a', Just b') -> 
-          let sum = a' + b'
-          in debug $ "a + b = " <> show sum
-        _ -> return ()
-    
-sceneMultiplexer inputGA offset ouputGA = makeDevice "Scene Multiplexer" () $ sceneMultiplexerF inputGA offset ouputGA
-
-sceneMultiplexerF :: GroupAddress -> Int -> GroupAddress -> DeviceM () ()
-sceneMultiplexerF inputAddr offset outputAddr = do
-    watchDPT18_1 inputAddr $ \(_, a) ->
-        groupWrite outputAddr (DPT18_1 (False, a + offset))
+      waitAllThreads actions
