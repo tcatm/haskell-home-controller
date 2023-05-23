@@ -1,12 +1,11 @@
-module ElphiWohnung
-    ( devices
-    )
+module ElphiWohnung ( config )
 where
 
 import KNXAddress
 import KNXDatatypes
 import DPTs
 import Device
+import Config
 
 import BlindsDevice
 import StaircaseLight
@@ -15,20 +14,22 @@ import TimeSender
 import qualified Data.Map as Map
 import Control.Monad
 
-devices =   [ timeSender timeSenderConfig
-            , presenceDevice
-            , meanTemperatureWohnzimmer
-            , meanTemperatureMasterBedroom
-            , switchScene
-            , allRoomsLightState
-            , rohrbegleitHeizung
-            , stoerungen
-            , lichtGästeWC
-            , lichtGästebad
-            , lichtAnkleide
-            , vorhangDevice
-            , blindsDeviceKitchen
-            ]
+config = Config
+    { devices = [ timeSender timeSenderConfig
+                , presenceDevice
+                , meanTemperatureWohnzimmer
+                , meanTemperatureMasterBedroom
+                , switchScene
+                , allRoomsLightState
+                , rohrbegleitHeizung
+                , stoerungen
+                , lichtGästeWC
+                , lichtGästebad
+                , lichtAnkleide
+                , vorhangDevice
+                , blindsDeviceKitchen
+                ]
+    }
 
 timeSenderConfig = TimeSenderConfig
     { timeGA = GroupAddress 0 2 10
@@ -49,7 +50,6 @@ blindsConfigKitchen = BlindsConfig
     , timeToMove = 19
     , motorStartDelay = 3
     }
-
 
 data PresenceDeviceState = PresenceDeviceState
     { presence :: Maybe Bool
