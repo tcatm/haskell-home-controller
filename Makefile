@@ -6,6 +6,7 @@ packages = \
 	-package conduit \
 	-package async \
 	-package conduit-extra \
+	-package split \
 	-package stm
 
 sources = \
