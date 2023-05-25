@@ -1,3 +1,6 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 module FM2 ( config )
 where
 
@@ -11,8 +14,10 @@ import BlindsDevice
 import StaircaseLight
 import TimeSender
 
+import Data.Aeson
 import qualified Data.Map as Map
 import Control.Monad
+import GHC.Generics
 
 config = Config
     { devices = [ timeSender timeSenderConfig
@@ -29,7 +34,9 @@ timeSenderConfig = TimeSenderConfig
 data PresenceDeviceState = PresenceDeviceState
     { presence :: Maybe Bool
     , presenceTimer :: Maybe TimerId
-    } deriving (Show)
+    } deriving (Show, Generic)
+
+instance ToJSON PresenceDeviceState
 
 presenceDeviceInitialState = PresenceDeviceState
     { presence = Nothing

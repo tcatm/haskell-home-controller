@@ -28,6 +28,11 @@ import Data.Time.Clock
 import Data.Time.LocalTime
 import qualified Data.Map.Strict as Map
 import System.Console.Pretty
+import Control.Monad.Writer.Lazy
+import Data.Aeson
+import Data.Text.Lazy.Encoding (decodeUtf8)
+import Data.Text.Lazy (unpack)
+import GHC.Generics
 
 logSourceDeviceRunner :: LogSource
 logSourceDeviceRunner = "DeviceRunner"
@@ -38,18 +43,21 @@ data DeviceInput    = StartDevice
                     deriving (Show)
 
 type DeviceRunnerT = ReaderT DeviceRunnerContext (LoggingT IO)
-type TimerT = StateT (Map TimerId ThreadId) DeviceRunnerT
+type WriterDeviceRunnerT = WriterT [Value] DeviceRunnerT
+type TimerT = StateT (Map TimerId ThreadId) WriterDeviceRunnerT
 
 data DeviceRunnerContext = DeviceRunnerContext
     { deviceRunnerInputChan :: TChan DeviceInput
     , deviceRunnerKNXQueue :: TQueue GroupMessage
+    , deviceRunnerWebQueue :: TQueue Value
     }
 
-runDevices :: [Device] -> TChan DeviceInput -> TQueue GroupMessage -> LoggingT IO ()
-runDevices devices deviceInput knxQueue = do
+runDevices :: [Device] -> TChan DeviceInput -> TQueue GroupMessage -> TQueue Value -> LoggingT IO ()
+runDevices devices deviceInput knxQueue webQueue = do
     let ctx = DeviceRunnerContext 
                 { deviceRunnerInputChan = deviceInput
                 , deviceRunnerKNXQueue = knxQueue
+                , deviceRunnerWebQueue = webQueue
                 }
 
     runReaderT (deviceRunner devices) ctx
@@ -67,12 +75,9 @@ deviceRunner devices = do
     loop devices'        
 
 mapDevices :: DeviceInput -> [Device] -> DeviceRunnerT [Device]
-mapDevices input devices = do 
-    devices' <- mapM (\(Device d) -> Device <$> processDeviceInput input d) devices
-
-    -- debugDevices devices'
-
-    return devices'
+mapDevices input = mapM (uncurry f) . zip [0..]
+    where
+        f deviceId (Device d) = Device <$> processDevice deviceId input d
 
 debugDevices :: [Device] -> DeviceRunnerT ()
 debugDevices devices = liftIO $ do
@@ -81,6 +86,42 @@ debugDevices devices = liftIO $ do
         putStrLn $ color Green $ "    " <> deviceName d
         putStrLn $ color Green $ "        Continuations: " <> show (deviceContinuations d)
         ) devices
+
+processDevice :: (Show s, ToJSON s) => Int -> DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
+processDevice deviceId input device = do
+    (device', log) <- runWriterT $ processDeviceInput input device
+
+    handleLog deviceId device' log
+
+    return device'
+
+handleLog :: (ToJSON s) => Int -> Device' s -> [Value] -> DeviceRunnerT ()
+handleLog deviceId device log = do
+    unless (null log) $ do
+        let log' = object   [ "deviceId" .= deviceId
+                            , "deviceName" .= deviceName device
+                            , "log" .= log
+                            , "state" .= deviceState device
+                            , "continuations" .= continuationToJSON device
+                            ]
+        webQueue <- asks deviceRunnerWebQueue
+        liftIO $ atomically $ writeTQueue webQueue log'
+
+continuationToJSON :: Device' s -> [Value]
+continuationToJSON device = mapMaybe f $ deviceContinuations device
+    where
+        f (GroupValueContinuation ga _ _) = Just $ object [ "type" .= ("GroupValue" :: String)
+                                                          , "ga" .= ga
+                                                          ]
+        f (GroupReadContinuation ga _) = Just $ object [ "type" .= ("GroupRead" :: String)
+                                                       , "ga" .= ga
+                                                       ]
+        f (ScheduledContinuation timerId time _) = Just $ object [ "type" .= ("Scheduled" :: String)
+                                                                 , "timerId" .= timerId
+                                                                 , "time" .= time
+                                                                 ]
+        f _ = Nothing
+
 
 filterF :: DeviceInput -> Continuation s -> Bool
 filterF input c = case input of
@@ -110,7 +151,7 @@ filterKNXMessage (IncomingGroupValueRead ga) c =
         GroupReadContinuation ga' _ -> ga' == ga
         _ -> False
 
-processDeviceInput :: (Show s) => DeviceInput -> Device' s -> DeviceRunnerT (Device' s)
+processDeviceInput :: (Show s) => DeviceInput -> Device' s -> WriterDeviceRunnerT (Device' s)
 processDeviceInput input device = do
     let continuations = deviceContinuations device
     let state = deviceState device
@@ -153,6 +194,7 @@ performContinuation _ state c@(StartContinuation device) =
     runDeviceWithEffects state c device
 
 performContinuation (TimerEvent timerId _) state c@(ScheduledContinuation _ _ device) = do
+    tell [ object [ "type" .= ("TimerEvent" :: String) , "timerId" .= timerId ] ]
     modify $ Map.delete timerId
     runDeviceWithEffects state c device
 
@@ -173,7 +215,7 @@ handleKNXValue payload state c@(GroupValueContinuation ga parser device) = do
 
         Right (_, _, dpt) -> do
             logInfoNS logSourceDeviceRunner . pack $ color Green $ "    Received " <> show dpt <> " at " <> show ga
-
+            tell [ object [ "type" .= ("KNXIn" :: String) , "ga" .= ga , "dpt" .= dpt ] ]
             runDeviceWithEffects state c (device dpt)
 
 handleKNXread :: (Show s) => s -> Continuation s -> TimerT ([Continuation s], s)
@@ -200,21 +242,23 @@ performDeviceActions actions = catMaybes <$> mapM performDeviceAction actions
 performDeviceAction :: Action s -> TimerT (Maybe (Continuation s))
 performDeviceAction (Log msg) = do
     logInfoNS logSourceDeviceRunner . pack $ color Yellow $ "    " <> msg
+    tell [ object [ "type" .= ("Log" :: String) , "message" .= msg ] ]
     return Nothing
 
 performDeviceAction (GroupWrite ga dpt) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueWrite " <> show dpt <> " to " <> show ga
-    lift $ sendKNXMessage $ GroupValueWrite ga dpt
+    tell [ object [ "type" .= ("KNXOut" :: String) , "ga" .= ga , "dpt" .= dpt ] ]
+    lift . lift $ sendKNXMessage $ GroupValueWrite ga dpt
     return Nothing
 
 performDeviceAction (GroupResponse ga dpt) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueResponse " <> show dpt <> " to " <> show ga
-    lift $ sendKNXMessage $ GroupValueResponse ga dpt
+    lift . lift $ sendKNXMessage $ GroupValueResponse ga dpt
     return Nothing
 
 performDeviceAction (GroupRead ga) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    GroupValueRead from " <> show ga
-    lift $ sendKNXMessage $ GroupValueRead ga
+    lift . lift $ sendKNXMessage $ GroupValueRead ga
     return Nothing
 
 performDeviceAction (Defer continuation) = do
@@ -232,7 +276,7 @@ performDeviceAction (Defer continuation) = do
             return $ Just continuation
 
         ScheduledContinuation timerId time device -> do
-            inputChan <- lift $ asks deviceRunnerInputChan
+            inputChan <- lift . lift $ asks deviceRunnerInputChan
             threadId <- liftIO $ forkIO $ do
                 currentTime <- getCurrentTime
                 let delay = time `diffUTCTime` currentTime
@@ -243,7 +287,7 @@ performDeviceAction (Defer continuation) = do
             return $ Just continuation
     
 performDeviceAction (CancelTimer timerId) = do
-    logInfoNS logSourceDeviceRunner . pack $ color Red $ "    Canceling timer: " <> show timerId
+    logInfoNS logSourceDeviceRunner . pack $ color Red $ "    Canceling timer: " ++ show timerId
 
     threadId <- gets $ Map.lookup timerId
     

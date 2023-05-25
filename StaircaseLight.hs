@@ -1,4 +1,5 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module StaircaseLight 
     ( staircaseLight
@@ -11,11 +12,15 @@ import DPTs
 import Data.Time.Clock
 import Data.Time.LocalTime
 import Control.Monad
+import GHC.Generics
+import Data.Aeson
 
 data LightState = LightState    { lightOn :: Bool
                                 , timerId :: Maybe TimerId
                                 , lightOnTime :: Maybe UTCTime
-                                } deriving (Show)
+                                } deriving (Show, Generic)
+
+instance ToJSON LightState
 
 data StaircaseLightConfig = StaircaseLightConfig
     { lightOnAddress :: GroupAddress

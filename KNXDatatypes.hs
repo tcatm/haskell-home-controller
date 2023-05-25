@@ -1,4 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module KNXDatatypes
     ( KNXTimeOfDay (..)
@@ -7,22 +9,26 @@ module KNXDatatypes
     , getKNXFloat16
     ) where
 
+import Data.Aeson
 import Data.Bits
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
+import Data.Data
 import Data.Word
 import Data.Int
 import Data.Time.Clock
 import Data.Time.LocalTime
 import Data.Time.Calendar
-
+import GHC.Generics
 import GHC.Float
 
 data KNXTimeOfDay = KNXTimeOfDay
     { knxWeekDay :: Maybe DayOfWeek
     , knxTimeOfDay :: TimeOfDay
-    } deriving (Eq, Show, Read)
+    } deriving (Eq, Show, Read, Generic)
+
+instance ToJSON KNXTimeOfDay
 
 instance Binary KNXTimeOfDay where
     put (KNXTimeOfDay weekDay timeOfDay) = do
@@ -55,7 +61,9 @@ data KNXHVACMode = KNXHVACModeAuto
                  | KNXHVACModeStandby
                  | KNXHVACModeEconomy
                  | KNXHVACModeBuildingProtection
-                 deriving (Eq, Show, Read, Enum)
+                 deriving (Eq, Show, Read, Enum, Generic)
+
+instance ToJSON KNXHVACMode
 
 instance Binary KNXHVACMode where
     put mode = putWord8 $ fromIntegral $ fromEnum mode

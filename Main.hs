@@ -3,7 +3,9 @@ module Main where
 import KNX
 import DeviceRunner
 import Console
+import Webinterface
 import Config
+import Webinterface
 
 import Control.Concurrent
 import Control.Concurrent.STM
@@ -59,11 +61,13 @@ main = do
   
     runStdoutLoggingT $ filterLogger logFilter $ do
       deviceInput <- liftIO $ newTChanIO
+      webQueue <- liftIO $ newTQueueIO
       knxContext <- createKNXContext knxGatewayHost knxGatewayPort (knxCallback deviceInput)
       
       let actions = [ runKnx knxContext
                     , stdinLoop (sendQueue knxContext)
-                    , runDevices (devices config) deviceInput (sendQueue knxContext)
+                    , runDevices (devices config) deviceInput (sendQueue knxContext) webQueue
+                    , runWebinterface webQueue
                     ]
 
       waitAllThreads actions
