@@ -74,8 +74,9 @@ presenceDevice = makeDevice "Anwesenheit" presenceDeviceInitialState presenceDev
 presenceDeviceF :: DeviceM PresenceDeviceState ()
 presenceDeviceF = do
     let presenceGA = GroupAddress 0 1 12
+    let presenceOutGA = GroupAddress 1 0 1
 
-    respondOnRead presenceGA $ fmap DPT1 <$> gets presence
+    respondOnRead presenceOutGA $ fmap DPT1 <$> gets presence
 
     watchDPT1 presenceGA $ \presence -> do
         debug $ "Presence: " <> show presence
@@ -86,7 +87,7 @@ presenceDeviceF = do
         modify $ \s -> s { presence = Just presence }
 
 enablePresence = do
-    groupWrite (GroupAddress 1 0 1) (DPT1 True)     -- Rückmeldung Anwesenheit
+    groupWrite presenceOutGA (DPT1 True)            -- Rückmeldung Anwesenheit
     groupWrite (GroupAddress 1 3 1) (DPT5_1 0.7)    -- Bel. Decke Flur 1.1 auf 70%
     groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeAuto)    -- Betriebsmodus Wohnung (HVAC) auf Auto
     groupWrite (GroupAddress 3 0 5) (DPT5_1 0.4)    -- Volumenstrom auf 40%
@@ -99,7 +100,7 @@ enablePresence = do
         Nothing -> return ()
 
 disablePresence = do
-    groupWrite (GroupAddress 1 0 1) (DPT1 False)            -- Rückmeldung Anwesenheit
+    groupWrite presenceOutGA (DPT1 False)                   -- Rückmeldung Anwesenheit
     groupWrite (GroupAddress 0 1 1) (DPT18_1 (False, 0))    -- Szene Aus für ganze Wohnung
     groupWrite (GroupAddress 3 0 5) (DPT5_1 0)              -- Volumenstrom auf 0%
     groupWrite (GroupAddress 1 1 27) (DPT1 False)           -- Steckdose Bett links Master Bedroom aus
