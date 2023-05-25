@@ -49,13 +49,15 @@ type TimerT = StateT (Map TimerId ThreadId) WriterDeviceRunnerT
 data DeviceRunnerContext = DeviceRunnerContext
     { deviceRunnerInputChan :: TChan DeviceInput
     , deviceRunnerKNXQueue :: TQueue GroupMessage
+    , deviceRunnerWebQueue :: TQueue Value
     }
 
-runDevices :: [Device] -> TChan DeviceInput -> TQueue GroupMessage -> LoggingT IO ()
-runDevices devices deviceInput knxQueue = do
+runDevices :: [Device] -> TChan DeviceInput -> TQueue GroupMessage -> TQueue Value -> LoggingT IO ()
+runDevices devices deviceInput knxQueue webQueue = do
     let ctx = DeviceRunnerContext 
                 { deviceRunnerInputChan = deviceInput
                 , deviceRunnerKNXQueue = knxQueue
+                , deviceRunnerWebQueue = webQueue
                 }
 
     runReaderT (deviceRunner devices) ctx
@@ -89,15 +91,37 @@ processDevice :: (Show s, ToJSON s) => Int -> DeviceInput -> Device' s -> Device
 processDevice deviceId input device = do
     (device', log) <- runWriterT $ processDeviceInput input device
 
-    handleLog deviceId (deviceName device) log (deviceState device')
+    handleLog deviceId device' log
 
     return device'
 
-handleLog :: (ToJSON s) => Int -> String -> [Value] -> s -> DeviceRunnerT ()
-handleLog deviceId deviceName log state = do
+handleLog :: (ToJSON s) => Int -> Device' s -> [Value] -> DeviceRunnerT ()
+handleLog deviceId device log = do
     unless (null log) $ do
-        let log' = object [ "deviceId" .= deviceId, "deviceName" .= deviceName, "log" .= log, "state" .= state ]
-        logInfoNS logSourceDeviceRunner . pack . unpack . decodeUtf8 . encode $ log'
+        let log' = object   [ "deviceId" .= deviceId
+                            , "deviceName" .= deviceName device
+                            , "log" .= log
+                            , "state" .= deviceState device
+                            , "continuations" .= continuationToJSON device
+                            ]
+        webQueue <- asks deviceRunnerWebQueue
+        liftIO $ atomically $ writeTQueue webQueue log'
+
+continuationToJSON :: Device' s -> [Value]
+continuationToJSON device = mapMaybe f $ deviceContinuations device
+    where
+        f (GroupValueContinuation ga _ _) = Just $ object [ "type" .= ("GroupValue" :: String)
+                                                          , "ga" .= ga
+                                                          ]
+        f (GroupReadContinuation ga _) = Just $ object [ "type" .= ("GroupRead" :: String)
+                                                       , "ga" .= ga
+                                                       ]
+        f (ScheduledContinuation timerId time _) = Just $ object [ "type" .= ("Scheduled" :: String)
+                                                                 , "timerId" .= timerId
+                                                                 , "time" .= time
+                                                                 ]
+        f _ = Nothing
+
 
 filterF :: DeviceInput -> Continuation s -> Bool
 filterF input c = case input of
@@ -170,8 +194,7 @@ performContinuation _ state c@(StartContinuation device) =
     runDeviceWithEffects state c device
 
 performContinuation (TimerEvent timerId _) state c@(ScheduledContinuation _ _ device) = do
-    let TimerId x = timerId
-    tell [ object [ "type" .= ("TimerEvent" :: String) , "timerId" .= x ] ]
+    tell [ object [ "type" .= ("TimerEvent" :: String) , "timerId" .= timerId ] ]
     modify $ Map.delete timerId
     runDeviceWithEffects state c device
 
@@ -247,7 +270,6 @@ performDeviceAction (Defer continuation) = do
             return Nothing
 
         GroupValueContinuation ga _ _ -> do
-            tell [ object [ "type" .= ("KNXListen" :: String) , "ga" .= show ga ] ]
             return $ Just continuation
 
         GroupReadContinuation ga _ -> do
@@ -261,13 +283,10 @@ performDeviceAction (Defer continuation) = do
                 threadDelay $ ceiling $ 1000000 * delay
                 atomically $ writeTChan inputChan $ TimerEvent timerId time
 
-            tell [ object [ "type" .= ("SetTimer" :: String) , "timerId" .= timerId, "time" .= show time ] ]
-
             modify $ Map.insert timerId threadId
             return $ Just continuation
     
 performDeviceAction (CancelTimer timerId) = do
-    tell [ object [ "type" .= ("CancelTimer" :: String) , "timerId" .= timerId ] ]
     logInfoNS logSourceDeviceRunner . pack $ color Red $ "    Canceling timer: " ++ show timerId
 
     threadId <- gets $ Map.lookup timerId

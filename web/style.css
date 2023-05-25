@@ -1,0 +1,108 @@
+/* CSS for the device overview */
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f8f8f8;
+}
+
+#devices {
+    columns: 5;
+    column-gap: 1rem;
+}
+
+section {
+    width: 100%;
+    margin: 0;
+    display: inline-block;
+}
+
+h2 {
+    margin: 0;
+    color: #333;
+    font: 10pt sans-serif;
+    text-align: center;
+    font-weight: normal;
+}
+
+dl {
+    margin: 0;
+}
+
+dt {
+    font-weight: bold;
+}
+
+dd {
+    margin-left: 20px;
+}
+
+ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+li {
+    margin-bottom: 10px;
+}
+
+.state {
+    color: blue;
+    margin: 1em;
+    font-size: 8pt;
+}
+
+.io-container {
+    background-color: white;
+    border: 1px solid #ddd;
+    display: flex;
+    font-size: 11px;
+    width: 100%;
+}
+
+.io-container > div {
+    width: 50%;
+}
+
+.io-container li {
+    margin: 0;
+}
+
+ul:nth-child(1) li {
+    color: blue;
+}
+
+ul:nth-child(2) li {
+    color: red;
+}
+
+ul.logs {
+    font: 10px monospace;
+    overflow: hidden;
+}
+
+ul.logs li {
+    margin: 0;
+}
+
+.flash {
+    animation: flashing 5s 1;
+}
+@keyframes flashing{
+    0%   { background-color: transparent;  }
+    10%  { background-color: yellow; }
+    100% { background-color: transparent; }
+}
+
+.io-container table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.io-container table td {
+    border: 1px solid #ddd;
+    padding: 2px;
+}
+
+tr.active {
+    color: green;
+}

@@ -61,12 +61,13 @@ main = do
   
     runStdoutLoggingT $ filterLogger logFilter $ do
       deviceInput <- liftIO $ newTChanIO
+      webQueue <- liftIO $ newTQueueIO
       knxContext <- createKNXContext knxGatewayHost knxGatewayPort (knxCallback deviceInput)
       
       let actions = [ runKnx knxContext
                     , stdinLoop (sendQueue knxContext)
-                    , runDevices (devices config) deviceInput (sendQueue knxContext)
-                    , runWebinterface
+                    , runDevices (devices config) deviceInput (sendQueue knxContext) webQueue
+                    , runWebinterface webQueue
                     ]
 
       waitAllThreads actions

@@ -13,6 +13,7 @@ packages = \
 	-package mtl \
 	-package aeson \
 	-package yesod \
+	-package yesod-static \
 	-package stm
 
 sources = \
@@ -23,6 +24,7 @@ sources = \
 	DeviceRunner.hs \
 	DPTs.hs \
 	ElphiWohnung.hs \
+	FM2.hs \
 	KNXAddress.hs \
 	KNXDatatypes.hs \
 	KNX.hs \
@@ -30,6 +32,7 @@ sources = \
 	KNXTelegram.hs \
 	StaircaseLight.hs \
 	TimeSender.hs \
+	Webinterface.hs \
 	Main.hs
 
 Main: $(sources)
