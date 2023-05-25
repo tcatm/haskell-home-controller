@@ -57,11 +57,13 @@ function inputEvent(json) {
     // set all inputs to inactive
     Object.values(device.inputs).forEach(function (input) {
         input.active = false;
+        input.update = false;
     });
 
     // set all outputs to inactive
     Object.values(device.outputs).forEach(function (output) {
         output.active = false;
+        output.update = false;
     });
 
     // delete all timers
@@ -83,6 +85,8 @@ function inputEvent(json) {
                 }
             } else 
                 device.inputs[key].active = true;
+
+            device.inputs[key].update = true;
         } else if (type == 'GroupRead') {
             let key = continuation.ga;
 
@@ -94,6 +98,8 @@ function inputEvent(json) {
                 }
             } else
                 device.outputs[key].active = true;
+
+            device.outputs[key].update = true;
         } else if (type == 'Scheduled') {
             let timerId = continuation.timerId;
             let time = new Date(continuation.time);
@@ -232,7 +238,7 @@ function updateDevices(devicesDict) {
     
         // Handle active class
         allRows.classed('active', d => d.value.active)
-            .classed('flash', d => d.value.active);
+            .classed('flash', d => d.value.update);
     
         // Exit selection
         rows.exit().remove();
