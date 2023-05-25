@@ -73,9 +73,6 @@ presenceDevice = makeDevice "Anwesenheit" presenceDeviceInitialState presenceDev
 
 presenceDeviceF :: DeviceM PresenceDeviceState ()
 presenceDeviceF = do
-    let presenceGA = GroupAddress 0 1 12
-    let presenceOutGA = GroupAddress 1 0 1
-
     respondOnRead presenceOutGA $ fmap DPT1 <$> gets presence
 
     watchDPT1 presenceGA $ \presence -> do
@@ -86,36 +83,40 @@ presenceDeviceF = do
 
         modify $ \s -> s { presence = Just presence }
 
-enablePresence = do
-    groupWrite presenceOutGA (DPT1 True)            -- Rückmeldung Anwesenheit
-    groupWrite (GroupAddress 1 3 1) (DPT5_1 0.7)    -- Bel. Decke Flur 1.1 auf 70%
-    groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeAuto)    -- Betriebsmodus Wohnung (HVAC) auf Auto
-    groupWrite (GroupAddress 3 0 5) (DPT5_1 0.4)    -- Volumenstrom auf 40%
-    
-    timerId <- gets presenceTimer
-    case timerId of
-        Just timerId -> do 
-            cancelTimer timerId
-            modify $ \s -> s { presenceTimer = Nothing }
-        Nothing -> return ()
+    where
+        presenceGA = GroupAddress 0 1 12
+        presenceOutGA = GroupAddress 1 0 1
 
-disablePresence = do
-    groupWrite presenceOutGA (DPT1 False)                   -- Rückmeldung Anwesenheit
-    groupWrite (GroupAddress 0 1 1) (DPT18_1 (False, 0))    -- Szene Aus für ganze Wohnung
-    groupWrite (GroupAddress 3 0 5) (DPT5_1 0)              -- Volumenstrom auf 0%
-    groupWrite (GroupAddress 1 1 27) (DPT1 False)           -- Steckdose Bett links Master Bedroom aus
-    groupWrite (GroupAddress 1 1 28) (DPT1 False)           -- Steckdose Bett rechts Master Bedroom aus
-    groupWrite (GroupAddress 1 1 29) (DPT1 False)           -- Handtuch Heizung Masterbad
-    groupWrite (GroupAddress 1 1 30) (DPT1 False)           -- Steckdose Gästezimmer
-    groupWrite (GroupAddress 1 1 31) (DPT1 False)           -- Handtuch Heizung Gästebad
-    groupWrite (GroupAddress 1 1 32) (DPT1 False)           -- Steckdose Bodentank 1
-    groupWrite (GroupAddress 1 1 33) (DPT1 False)           -- Steckdose Spiegelheizung Masterbad
-   
-    let timerDelay = 3 * 24 * 60 * 60
-    timerId <- scheduleIn timerDelay $ do
-        groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeStandby)    -- Betriebsmodus Wohnung (HVAC) auf Standby
+        enablePresence = do
+            groupWrite presenceOutGA (DPT1 True)            -- Rückmeldung Anwesenheit
+            groupWrite (GroupAddress 1 3 1) (DPT5_1 0.7)    -- Bel. Decke Flur 1.1 auf 70%
+            groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeAuto)    -- Betriebsmodus Wohnung (HVAC) auf Auto
+            groupWrite (GroupAddress 3 0 5) (DPT5_1 0.4)    -- Volumenstrom auf 40%
+            
+            timerId <- gets presenceTimer
+            case timerId of
+                Just timerId -> do 
+                    cancelTimer timerId
+                    modify $ \s -> s { presenceTimer = Nothing }
+                Nothing -> return ()
 
-    modify $ \s -> s { presenceTimer = Just timerId }
+        disablePresence = do
+            groupWrite presenceOutGA (DPT1 False)                   -- Rückmeldung Anwesenheit
+            groupWrite (GroupAddress 0 1 1) (DPT18_1 (False, 0))    -- Szene Aus für ganze Wohnung
+            groupWrite (GroupAddress 3 0 5) (DPT5_1 0)              -- Volumenstrom auf 0%
+            groupWrite (GroupAddress 1 1 27) (DPT1 False)           -- Steckdose Bett links Master Bedroom aus
+            groupWrite (GroupAddress 1 1 28) (DPT1 False)           -- Steckdose Bett rechts Master Bedroom aus
+            groupWrite (GroupAddress 1 1 29) (DPT1 False)           -- Handtuch Heizung Masterbad
+            groupWrite (GroupAddress 1 1 30) (DPT1 False)           -- Steckdose Gästezimmer
+            groupWrite (GroupAddress 1 1 31) (DPT1 False)           -- Handtuch Heizung Gästebad
+            groupWrite (GroupAddress 1 1 32) (DPT1 False)           -- Steckdose Bodentank 1
+            groupWrite (GroupAddress 1 1 33) (DPT1 False)           -- Steckdose Spiegelheizung Masterbad
+        
+            let timerDelay = 3 * 24 * 60 * 60
+            timerId <- scheduleIn timerDelay $ do
+                groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeStandby)    -- Betriebsmodus Wohnung (HVAC) auf Standby
+
+            modify $ \s -> s { presenceTimer = Just timerId }
 
 meanTemperatureWohnzimmer :: Device
 meanTemperatureWohnzimmer = makeDevice "Mittelwert Temperatur Wohnzimmer" Map.empty $ meanTemperatureDevice addresses $ GroupAddress 3 2 2
