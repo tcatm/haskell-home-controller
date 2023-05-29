@@ -136,6 +136,8 @@ function inputEvent(json) {
                 }
             } else
                 device.outputs[key].value = value;
+
+            device.outputs[key].update = true;
         }
     });
 
@@ -143,7 +145,7 @@ function inputEvent(json) {
 }
 
 function showDpt(dpt) {
-    if (dpt.type == 'DPT9') {
+    if (dpt.type == 'DPT9' || dpt.type == 'DPT5_1') {
         // round value to 2 decimals
         let value = Math.round(dpt.value * 100) / 100;
         return value; // + ' (' + dpt.type + ')';
