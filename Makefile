@@ -14,6 +14,9 @@ packages = \
 	-package unordered-containers \
 	-package scientific \
 	-package vector \
+	-package connection \
+	-package http-client-tls \
+	-package http-client \
 	-package stm
 
 sources = \
@@ -33,6 +36,7 @@ sources = \
 	StaircaseLight.hs \
 	TimeSender.hs \
 	Webinterface.hs \
+	Hue/Hue.hs \
 	Main.hs
 
 Main: $(sources)

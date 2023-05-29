@@ -6,6 +6,7 @@ import Console
 import Webinterface
 import Config
 import Webinterface
+import Hue.Hue
 
 import Control.Concurrent
 import Control.Concurrent.STM
