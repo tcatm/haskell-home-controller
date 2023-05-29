@@ -52,8 +52,8 @@ blindsConfigKitchen = BlindsConfig
     , positionStateGA = GroupAddress 2 5 3
     , openGA = GroupAddress 2 1 39
     , closeGA = GroupAddress 2 1 40
-    , timeToMove = 19
-    , motorStartDelay = 3
+    , timeToMove = 20
+    , motorStartDelay = 0
     }
 
 data PresenceDeviceState = PresenceDeviceState
