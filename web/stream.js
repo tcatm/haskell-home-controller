@@ -223,6 +223,11 @@ function updateDevices(devicesDict) {
 
     sections.exit().remove();
 
+    function flashAnimation(selection) {
+        selection.classed('flash', true);
+        selection.transition().duration(3000).on('end', () => selection.classed('flash', false));
+    }
+
     function updateIO(table, ioData, isInput) {
         const ioKeys = Object.keys(ioData).sort();
         const ioArray = ioKeys.map(key => ({key: key, value: ioData[key]}));
@@ -239,8 +244,10 @@ function updateDevices(devicesDict) {
         allRows.select('td:nth-child(2)').text(d => isInput ? d.key : d.value.value);
     
         // Handle active class
-        allRows.classed('active', d => d.value.active)
-            .classed('flash', d => d.value.update);
+        allRows.classed('active', d => d.value.active);
+        
+        // If update, trigger animation
+        flashAnimation(allRows.filter(d => d.value.update));
     
         // Exit selection
         rows.exit().remove();

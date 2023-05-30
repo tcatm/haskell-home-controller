@@ -85,7 +85,7 @@ ul.logs li {
 }
 
 .flash {
-    animation: flashing 5s 1;
+    animation: flashing 3s 1;
 }
 @keyframes flashing{
     0%   { background-color: transparent;  }
