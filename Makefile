@@ -11,6 +11,9 @@ packages = \
 	-package aeson \
 	-package yesod \
 	-package yesod-static \
+	-package unordered-containers \
+	-package scientific \
+	-package vector \
 	-package stm
 
 sources = \
