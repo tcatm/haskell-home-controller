@@ -17,6 +17,7 @@ packages = \
 	-package connection \
 	-package http-client-tls \
 	-package http-client \
+	-package ini \
 	-package stm
 
 sources = \

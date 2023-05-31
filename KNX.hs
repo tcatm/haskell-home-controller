@@ -8,7 +8,6 @@ module KNX
     , KNXCallback (..)
     , KNXContext (..)
     , logSourceKNX
-    , sendMessage
     ) where
 
 import APDU
@@ -236,6 +235,3 @@ sendGroupMessage (GroupValueRead groupAddress) = do
 sendGroupMessage (GroupValueResponse groupAddress dpt) = do
     logDebugNS logSourceKNX . pack $ "Responding to " <> show groupAddress <> " with " <> show dpt
     sendTelegram $ composeTelegram ACPIGroupValueResponse groupAddress (Just dpt)
-
-sendMessage :: TQueue GroupMessage -> GroupMessage -> IO ()
-sendMessage queue msg = atomically $ writeTQueue queue $ msg

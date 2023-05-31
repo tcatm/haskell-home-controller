@@ -2,7 +2,6 @@ module Console
     ( stdinLoop
     ) where
 
-import KNX (sendMessage)
 import KNXAddress
 import KNXMessages
 import DPTs
@@ -24,7 +23,7 @@ stdinLoop knx = forever $ do
       -- Do something with the parsed values
       liftIO $ putStrLn $ "Parsed: " <> show groupAddress <> " " <> show dpt
       -- Send a GroupValueWrite to the KNX bus
-      liftIO $ sendMessage knx $ GroupValueWrite groupAddress dpt
+      liftIO $ atomically $ writeTQueue knx $ GroupValueWrite groupAddress dpt
       return ()
     Nothing -> liftIO $ putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 

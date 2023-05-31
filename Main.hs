@@ -6,7 +6,7 @@ import Console
 import Webinterface
 import Config
 import Webinterface
-import Hue.Hue
+import qualified Hue.Hue as Hue
 
 import Control.Concurrent
 import Control.Concurrent.STM
@@ -61,14 +61,16 @@ main = do
     let Just config = mConfig
   
     runStdoutLoggingT $ filterLogger logFilter $ do
+      hueContext <- liftIO $ Hue.initHue "hueconfig.ini"
       deviceInput <- liftIO $ newTChanIO
       webQueue <- liftIO $ newTQueueIO
       knxContext <- createKNXContext knxGatewayHost knxGatewayPort (knxCallback deviceInput)
       
       let actions = [ runKnx knxContext
                     , stdinLoop (sendQueue knxContext)
-                    , runDevices (devices config) deviceInput (sendQueue knxContext) webQueue
+                    , runDevices (devices config) deviceInput (sendQueue knxContext) webQueue (Hue.sendQueue hueContext)
                     , runWebinterface webQueue
+                    , Hue.runHue hueContext
                     ]
 
       waitAllThreads actions

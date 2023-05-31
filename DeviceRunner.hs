@@ -7,7 +7,7 @@ module DeviceRunner
     , logSourceDeviceRunner
     ) where
 
-import KNX (sendMessage)
+import Hue.Hue (HueCommand (..))
 import KNXMessages
 import DPTs
 import Device hiding (gets, modify)
@@ -50,14 +50,16 @@ data DeviceRunnerContext = DeviceRunnerContext
     { deviceRunnerInputChan :: TChan DeviceInput
     , deviceRunnerKNXQueue :: TQueue GroupMessage
     , deviceRunnerWebQueue :: TQueue Value
+    , deviceRunnerHueQueue :: TQueue HueCommand
     }
 
-runDevices :: [Device] -> TChan DeviceInput -> TQueue GroupMessage -> TQueue Value -> LoggingT IO ()
-runDevices devices deviceInput knxQueue webQueue = do
+runDevices :: [Device] -> TChan DeviceInput -> TQueue GroupMessage -> TQueue Value -> TQueue HueCommand -> LoggingT IO ()
+runDevices devices deviceInput knxQueue webQueue hueQueue = do
     let ctx = DeviceRunnerContext 
                 { deviceRunnerInputChan = deviceInput
                 , deviceRunnerKNXQueue = knxQueue
                 , deviceRunnerWebQueue = webQueue
+                , deviceRunnerHueQueue = hueQueue
                 }
 
     runReaderT (deviceRunner devices) ctx
@@ -261,6 +263,11 @@ performDeviceAction (GroupRead ga) = do
     lift . lift $ sendKNXMessage $ GroupValueRead ga
     return Nothing
 
+performDeviceAction (HueActivateScene room scene) = do
+    logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    HueActivateScene " <> show scene <> " in " <> show room
+    lift . lift $ sendHueMessage $ HueCommandScene room scene
+    return Nothing
+
 performDeviceAction (Defer continuation) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    Deferring continuation: " <> show continuation
 
@@ -300,4 +307,9 @@ performDeviceAction (CancelTimer timerId) = do
 sendKNXMessage :: GroupMessage -> DeviceRunnerT ()
 sendKNXMessage msg = do
     queue <- asks deviceRunnerKNXQueue
-    liftIO $ sendMessage queue msg
+    liftIO $ atomically $ writeTQueue queue msg
+
+sendHueMessage :: HueCommand -> DeviceRunnerT ()
+sendHueMessage msg = do
+    queue <- asks deviceRunnerHueQueue
+    liftIO $ atomically $ writeTQueue queue msg

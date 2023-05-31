@@ -2,11 +2,16 @@
 
 module Hue.Hue
     ( initHue
+    , runHue
+    , HueCommand (..)
+    , HueContext (..)
     )
   where
 
+import Data.Ini
 import Data.Aeson
 import Data.Text
+import Data.Text.Encoding
 import GHC.Generics
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as L
@@ -14,17 +19,25 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS
 import Network.Connection
 import Control.Exception (handle, IOException)
+import Control.Monad
+import Control.Monad.Logger
+import Control.Monad.Except
+import Control.Monad.Reader
+import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Concurrent.STM.TChan
 
-data LightCommand = LightCommand { commandOn :: Maybe Bool, commandBrightness :: Maybe Int, color :: Maybe ColorPoint } deriving Generic
-
-data ColorPoint = ColorPoint { x :: Float, y :: Float } deriving Generic
-
-instance ToJSON LightCommand
-instance ToJSON ColorPoint
+data HueCommand = HueCommandScene String String
+                deriving (Show)
 
 data HueConfig = HueConfig
   { bridgeHost :: Text
   , appKey :: Text
+  }
+
+data HueContext = HueContext
+  { config :: HueConfig
+  , sendQueue :: TQueue HueCommand
   }
 
 newtype LightId = LightId String
@@ -41,23 +54,47 @@ tlsSettings = TLSSettingsSimple
   , settingUseServerName = True
   }
 
-initHue :: Text -> IO (HueConfig)
+readConfig :: String -> IO (Either String HueConfig)
+readConfig configFilename = runExceptT $ do
+  config <- ExceptT $ readIniFile configFilename
+
+  host <- ExceptT $ return $ lookupValue "hue" "host" config
+  appKey <- ExceptT $ return $ lookupValue "hue" "user" config
+
+  return $ HueConfig host appKey
+
+initHue :: String -> IO (HueContext)
 initHue configFilename = do
   config <- readConfig configFilename
-  let host = bridgeHost config
-  let appKey = appKey config
-  let config' = HueConfig host appKey
-  return config'
+  case config of
+    Left err -> error err
+    Right config -> do
+      sendQueue <- newTQueueIO
+      return $ HueContext config sendQueue
 
+runHue :: HueContext -> LoggingT IO ()
+runHue ctx = runReaderT hueLoop ctx
+
+hueLoop :: ReaderT HueContext (LoggingT IO) ()
+hueLoop = forever $ do
+  ctx <- ask
+  command <- liftIO $ atomically $ readTQueue $ sendQueue ctx
+
+  case command of
+    HueCommandScene roomName sceneName -> do
+      liftIO $ putStrLn $ "Setting scene " <> sceneName <> " in room " <> roomName
+--      liftIO $ setScene ctx roomName sceneName
+      
 prepareRequest :: HueConfig -> C.ByteString -> String -> L.ByteString -> IO (Request)
 prepareRequest config method path body = do
   let req = defaultRequest
-        { host = C.pack $ unpack $ bridgeHost config
+        { host = encodeUtf8 $ bridgeHost config
         , secure = True
         , port = 443
         , path = C.pack $ path 
         , method = method
-        , requestHeaders = [("hue-application-key", C.pack $ appKey config)]
+        , requestHeaders = [("hue-application-key", encodeUtf8 $ appKey config)]
+
         , requestBody = RequestBodyLBS body
         }
 

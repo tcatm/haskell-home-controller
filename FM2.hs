@@ -23,6 +23,7 @@ config = Config
     { devices = [ timeSender timeSenderConfig
                 , presenceDevice
                 , sceneMultiplexer
+                , hueScenes
                 ]
     }
 
@@ -114,3 +115,16 @@ sceneMultiplexerF config = do
                 let outputValue = scene + sceneInputStart entry
                 debug $ "Mapped to " <> show outputValue <> " on " <> show outputGA <> " (save: " <> show save <> ")"
                 groupWrite outputGA $ DPT18_1 (save, outputValue)
+
+hueScenes :: Device
+hueScenes = makeDevice "Hue Szenen" () hueScenesF
+
+hueScenesF :: DeviceM () ()
+hueScenesF = do
+    let sceneGA = GroupAddress 0 1 18
+    watchDPT18_1 sceneGA $ \(save, scene) -> do
+        unless save $ do
+            debug $ "Hue scene: " <> show scene
+            let sceneString = show scene
+
+            hueActivateScene "Hobbyraum" sceneString
