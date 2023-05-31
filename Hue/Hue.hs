@@ -12,6 +12,10 @@ import Data.Ini
 import Data.Aeson
 import Data.Text
 import Data.Text.Encoding
+import Data.UUID
+import Data.Map
+import Data.Maybe (fromJust)
+import qualified Data.HashMap.Strict as HashMap
 import GHC.Generics
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as L
@@ -40,6 +44,17 @@ data HueContext = HueContext
   { config :: HueConfig
   , sendQueue :: TQueue HueCommand
   }
+
+data Scene = Scene
+  { sceneName :: Text
+  , sceneId :: UUID
+  } deriving (Show)
+
+data Room = Room
+  { roomName :: Text
+  , roomId :: UUID
+  , roomScenes :: [Scene]
+  } deriving (Show)
 
 newtype LightId = LightId String
 
@@ -84,9 +99,10 @@ hueLoop = forever $ do
   case command of
     HueCommandScene roomName sceneName -> do
       liftIO $ putStrLn $ "Setting scene " <> sceneName <> " in room " <> roomName
---      liftIO $ setScene ctx roomName sceneName
+      liftIO $ setScene ctx roomName sceneName
     HueCommandRoom roomName on -> do
       liftIO $ putStrLn $ "Setting room " <> roomName <> " to " <> show on
+      liftIO $ setRoom ctx roomName on
       
 prepareRequest :: HueConfig -> C.ByteString -> String -> L.ByteString -> IO (Request)
 prepareRequest config method path body = do
@@ -108,6 +124,49 @@ makeRequest config method url body = do
   req <- prepareRequest config method url body
   manager <- newManager $ (mkManagerSettings tlsSettings Nothing)
   httpLbs req manager
+
+parseRoom :: Object -> Maybe Room
+parseRoom object = do
+  id <- HashMap.lookup "id" object
+  metadata <- HashMap.lookup "metadata" object
+  name <- case metadata of
+    Object metadata -> HashMap.lookup "name" metadata
+    _ -> Nothing
+
+  let id' = decode $ encode id :: Maybe UUID
+  let name' = decode $ encode name :: Maybe Text
+
+  return $ Room (fromJust name') (fromJust id') []
+
+getRooms :: HueConfig -> IO (Map String Room)
+getRooms config = do
+  response <- makeRequest config "GET" "/api/room" ""
+
+  let object = decode $ responseBody response :: Maybe Object
+
+  if object == Nothing
+    then error "Could not parse response"
+    else do
+      let object' = fromJust object
+      let d = HashMap.lookup "data" object'
+      let d' = fromJust d
+      let d'' = case d' of
+            Array d' -> d'
+            _ -> error "Could not parse response"
+      let rooms = Prelude.map parseRoom $ toList d''
+
+      return $ fromList $ Prelude.map (\room -> (unpack $ roomName room, room)) rooms
+
+
+setScene :: HueContext -> String -> String -> IO ()
+setScene ctx roomName sceneName = do
+  rooms <- getRooms (config ctx)
+  putStrLn $ show rooms
+
+setRoom :: HueContext -> String -> Bool -> IO ()
+setRoom ctx roomName on = do
+  rooms <- getRooms (config ctx)
+  putStrLn $ show rooms
 
 listenForEvents :: HueConfig -> IO ()
 listenForEvents config = do

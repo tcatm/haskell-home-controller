@@ -18,6 +18,7 @@ packages = \
 	-package http-client-tls \
 	-package http-client \
 	-package ini \
+	-package uuid \
 	-package stm
 
 sources = \
