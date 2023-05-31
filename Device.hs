@@ -18,6 +18,7 @@ module Device
     , onGroupRead
     , groupResponse
     , hueActivateScene
+    , hueSetRoomOn
     , scheduleAt
     , scheduleIn
     , cancelTimer
@@ -74,6 +75,7 @@ data Action s   = GroupWrite GroupAddress DPT
                 | GroupResponse GroupAddress DPT
                 | GroupRead GroupAddress
                 | HueActivateScene String String
+                | HueSetRoomOn String Bool
                 | Defer (Continuation s)
                 | Log String
                 | CancelTimer TimerId
@@ -83,6 +85,7 @@ instance Show (Action s) where
     show (GroupResponse ga dpt) = "GroupResponse " <> show ga <> " " <> show dpt
     show (GroupRead ga) = "GroupRead " <> show ga
     show (HueActivateScene room scene) = "HueActivateScene " <> room <> " " <> scene
+    show (HueSetRoomOn room on) = "HueSetRoomOn " <> room <> " " <> show on
     show (Defer c) = "Defer " <> show c
     show (Log msg) = "Log " <> msg
     show (CancelTimer timerId) = "CancelTimer " <> show timerId
@@ -149,6 +152,10 @@ onGroupRead ga cont = action $ Defer $ GroupReadContinuation ga cont
 -- | Activate a Hue scene.
 hueActivateScene :: String -> String -> DeviceM s ()
 hueActivateScene room scene = action $ HueActivateScene room scene
+
+-- | Turn a Hue room on or off.
+hueSetRoomOn :: String -> Bool -> DeviceM s ()
+hueSetRoomOn room on = action $ HueSetRoomOn room on
 
 -- | Schedule an action to be run at a specific time.
 scheduleAt :: UTCTime -> DeviceM s () -> DeviceM s (TimerId)

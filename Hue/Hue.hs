@@ -28,6 +28,7 @@ import Control.Concurrent.STM
 import Control.Concurrent.STM.TChan
 
 data HueCommand = HueCommandScene String String
+                | HueCommandRoom String Bool
                 deriving (Show)
 
 data HueConfig = HueConfig
@@ -84,6 +85,8 @@ hueLoop = forever $ do
     HueCommandScene roomName sceneName -> do
       liftIO $ putStrLn $ "Setting scene " <> sceneName <> " in room " <> roomName
 --      liftIO $ setScene ctx roomName sceneName
+    HueCommandRoom roomName on -> do
+      liftIO $ putStrLn $ "Setting room " <> roomName <> " to " <> show on
       
 prepareRequest :: HueConfig -> C.ByteString -> String -> L.ByteString -> IO (Request)
 prepareRequest config method path body = do

@@ -124,7 +124,12 @@ hueScenesF = do
     let sceneGA = GroupAddress 0 1 18
     watchDPT18_1 sceneGA $ \(save, scene) -> do
         unless save $ do
-            debug $ "Hue scene: " <> show scene
-            let sceneString = show scene
+            case scene of
+                0 -> do
+                    debug "Hue: Off"
+                    hueSetRoomOn "Hobbyraum" False
+                _ -> do
+                    debug $ "Hue scene: " <> show scene
+                    let sceneString = show scene
 
-            hueActivateScene "Hobbyraum" sceneString
+                    hueActivateScene "Hobbyraum" sceneString

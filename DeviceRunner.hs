@@ -268,6 +268,11 @@ performDeviceAction (HueActivateScene room scene) = do
     lift . lift $ sendHueMessage $ HueCommandScene room scene
     return Nothing
 
+performDeviceAction (HueSetRoomOn room bool) = do
+    logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    HueSetRoomOn " <> show bool <> " in " <> show room
+    lift . lift $ sendHueMessage $ HueCommandRoom room bool
+    return Nothing
+
 performDeviceAction (Defer continuation) = do
     logInfoNS logSourceDeviceRunner . pack $ color Magenta $ "    Deferring continuation: " <> show continuation
 
