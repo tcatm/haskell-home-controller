@@ -33,6 +33,7 @@ config = Config
                 , lichtAnkleide
                 , vorhangDevice
                 , blindsDeviceKitchen
+                , hueScenes
                 ]
     }
 
@@ -386,3 +387,26 @@ vorhangAufZu name inputGA openGA closeGA = do
             -- False means "open", True means "close"
             False -> groupWrite openGA (DPT1 True)
             True -> groupWrite closeGA (DPT1 True)
+
+hueScenesConfig :: [(GroupAddress, String)]
+hueScenesConfig = [ (GroupAddress 0 1 2, "Studio")
+                  , (GroupAddress 0 1 5, "Küche")
+                  , (GroupAddress 0 1 11, "Wohnzimmer")
+                  ]
+
+hueScenes :: Device
+hueScenes = makeDevice "Hue Szenen" () $ hueScenesF hueScenesConfig
+
+hueScenesF :: [(GroupAddress, String)] -> DeviceM () ()
+hueScenesF config = do
+    forM_ config $ \(ga, name) -> do
+        watchDPT18_1 ga $ \(save, scene) -> unless save $ do
+            case scene of
+                0 -> do
+                    debug "Hue: Off"
+                    hueSetRoomOn name False
+                _ -> do
+                    debug $ "Hue scene: " <> show scene
+                    let sceneString = show scene
+
+                    hueActivateScene name sceneString

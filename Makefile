@@ -39,6 +39,7 @@ sources = \
 	TimeSender.hs \
 	Webinterface.hs \
 	Hue/Hue.hs \
+	Hue/Datatypes.hs \
 	Main.hs
 
 Main: $(sources)

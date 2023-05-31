@@ -8,6 +8,8 @@ module Hue.Hue
     )
   where
 
+import qualified Hue.Datatypes as HD
+
 import Data.Ini
 import Data.Aeson
 import Data.Text
@@ -38,31 +40,12 @@ data HueCommand = HueCommandScene String String
 data HueConfig = HueConfig
   { bridgeHost :: Text
   , appKey :: Text
-  }
+  } deriving (Show)
 
 data HueContext = HueContext
   { config :: HueConfig
   , sendQueue :: TQueue HueCommand
   }
-
-data Scene = Scene
-  { sceneName :: Text
-  , sceneId :: UUID
-  } deriving (Show)
-
-data Room = Room
-  { roomName :: Text
-  , roomId :: UUID
-  , roomScenes :: [Scene]
-  } deriving (Show)
-
-newtype LightId = LightId String
-
-data HueEvent = HueEvent { id :: String, eventType :: String, state :: Maybe HueState } deriving (Show, Generic)
-data HueState = HueState { on :: Bool, brightness :: Int } deriving (Show, Generic)
-
-instance FromJSON HueEvent
-instance FromJSON HueState
 
 tlsSettings = TLSSettingsSimple
   { settingDisableCertificateValidation = True
@@ -113,7 +96,6 @@ prepareRequest config method path body = do
         , path = C.pack $ path 
         , method = method
         , requestHeaders = [("hue-application-key", encodeUtf8 $ appKey config)]
-
         , requestBody = RequestBodyLBS body
         }
 
@@ -125,48 +107,58 @@ makeRequest config method url body = do
   manager <- newManager $ (mkManagerSettings tlsSettings Nothing)
   httpLbs req manager
 
-parseRoom :: Object -> Maybe Room
-parseRoom object = do
-  id <- HashMap.lookup "id" object
-  metadata <- HashMap.lookup "metadata" object
-  name <- case metadata of
-    Object metadata -> HashMap.lookup "name" metadata
-    _ -> Nothing
 
-  let id' = decode $ encode id :: Maybe UUID
-  let name' = decode $ encode name :: Maybe Text
+getResponse :: (FromJSON a) => HueConfig -> String -> IO [a]
+getResponse config endpoint = do
+  putStrLn $ "GET " <> endpoint
+  response <- makeRequest config "GET" endpoint ""
+  let jsonBody = responseBody response
+  let result = eitherDecode jsonBody :: (FromJSON a) => Either String (HD.Response a)
+  case result of
+    Left errMsg -> do
+      putStrLn $ "Error decoding response: " <> errMsg
+      return []
+    Right resp -> return $ HD.responseData resp
 
-  return $ Room (fromJust name') (fromJust id') []
+getRooms :: HueConfig -> IO [HD.Room]
+getRooms config = getResponse config "/clip/v2/resource/room"
 
-getRooms :: HueConfig -> IO (Map String Room)
-getRooms config = do
-  response <- makeRequest config "GET" "/api/room" ""
+getScenes :: HueConfig -> IO [HD.Scene]
+getScenes config = getResponse config "/clip/v2/resource/scene"
 
-  let object = decode $ responseBody response :: Maybe Object
-
-  if object == Nothing
-    then error "Could not parse response"
-    else do
-      let object' = fromJust object
-      let d = HashMap.lookup "data" object'
-      let d' = fromJust d
-      let d'' = case d' of
-            Array d' -> d'
-            _ -> error "Could not parse response"
-      let rooms = Prelude.map parseRoom $ toList d''
-
-      return $ fromList $ Prelude.map (\room -> (unpack $ roomName room, room)) rooms
-
+filterRoomsByName :: String -> [HD.Room] -> [HD.Room]
+filterRoomsByName name rooms = Prelude.filter (\r -> HD.metadataName (HD.roomMetadata r) == name) rooms
 
 setScene :: HueContext -> String -> String -> IO ()
 setScene ctx roomName sceneName = do
-  rooms <- getRooms (config ctx)
-  putStrLn $ show rooms
+  rooms <- filterRoomsByName roomName <$> getRooms (config ctx)
+  scenes <- getScenes (config ctx)
+
+  forM_ rooms $ \room -> do
+    let scenes' = Prelude.filter (\s -> HD.sceneGroup s == (HD.Group (HD.roomId room) "room")) scenes
+    let scenes'' = Prelude.filter (\s -> HD.metadataName (HD.sceneMetadata s) == sceneName) scenes'
+
+    forM_ scenes'' $ \scene -> do
+      let url = "/clip/v2/resource/scene/" <> (toString $ HD.sceneId scene)
+      let body = object [ "recall" .= object [ "action" .= ("active" :: Text) ] ]
+      putStrLn $ "PUT " <> url <> " " <> (show body)
+      response <- makeRequest (config ctx) "PUT" url (encode body)
+      putStrLn $ show response
 
 setRoom :: HueContext -> String -> Bool -> IO ()
 setRoom ctx roomName on = do
-  rooms <- getRooms (config ctx)
-  putStrLn $ show rooms
+  rooms <- filterRoomsByName roomName <$> getRooms (config ctx)
+  let services = Prelude.concatMap HD.roomServices rooms
+  let services' = Prelude.filter (\s -> HD.serviceRtype s == "grouped_light") services
+  let serviceIds = Prelude.map HD.serviceRid services'
+
+  let body = object [ "on" .= object [ "on" .= on ] ]
+
+  forM_ serviceIds $ \serviceId -> do
+    let url = "/clip/v2/resource/grouped_light/" <> (toString serviceId)
+    putStrLn $ "PUT " <> url <> " " <> (show body)
+    response <- makeRequest (config ctx) "PUT" url (encode body)
+    putStrLn $ show response
 
 listenForEvents :: HueConfig -> IO ()
 listenForEvents config = do
