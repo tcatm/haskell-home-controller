@@ -2,7 +2,7 @@
 
 module Config where
 
-import Device
+import DeviceTypes
 
 data Config = Config
     { devices :: [Device]

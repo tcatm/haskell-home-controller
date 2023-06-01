@@ -6,6 +6,7 @@ module BlindsDevice
     ) where
 
 import Device
+import DeviceTypes
 import KNXAddress
 import DPTs
 import Data.Word

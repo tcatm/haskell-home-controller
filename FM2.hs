@@ -8,6 +8,7 @@ import KNXAddress
 import KNXDatatypes
 import DPTs
 import Device
+import DeviceTypes
 import Config
 
 import BlindsDevice

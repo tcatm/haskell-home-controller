@@ -6,6 +6,7 @@ module TimeSender
 import KNXAddress
 import DPTs
 import Device
+import DeviceTypes
 
 import KNXDatatypes
 

@@ -10,7 +10,7 @@ module DeviceRunner
 import Hue.Hue (HueCommand (..))
 import KNXMessages
 import DPTs
-import Device hiding (gets, modify)
+import DeviceTypes
 import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.STM

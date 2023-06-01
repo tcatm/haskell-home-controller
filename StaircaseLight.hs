@@ -7,6 +7,7 @@ module StaircaseLight
     ) where
 
 import Device
+import DeviceTypes
 import KNXAddress
 import DPTs
 import Data.Time.Clock

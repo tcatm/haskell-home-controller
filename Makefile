@@ -26,6 +26,7 @@ sources = \
 	BlindsDevice.hs \
 	Console.hs \
 	Device.hs \
+	DeviceTypes.hs \
 	DeviceRunner.hs \
 	DPTs.hs \
 	ElphiWohnung.hs \
