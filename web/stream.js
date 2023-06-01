@@ -1,4 +1,5 @@
 var source = new EventSource('/stream');
+var devices = {};
 
 // Connection opened
 source.addEventListener('open', function (event) {
@@ -11,7 +12,7 @@ source.addEventListener('message', function (event) {
 
     console.log('Message from server: ', json);
     
-   // pass json to function that will update the DOM
+    // pass json to function that will update the DOM
     inputEvent(json);
 }, false);
 
@@ -26,122 +27,82 @@ source.addEventListener('error', function (event) {
     }
 }, false);
 
-var devices = {};
-
 function inputEvent(json) {
-    let id = json.deviceId;
-    let name = json.deviceName;
-    let state = json.state;
-    let continuations = json.continuations;
-    
-    // Get or create device
-    if (!devices[id]) {
-        devices[id] = {
-            id: id,
-            name: name,
-            states: [],
-            log: [],
-            inputs: {},
-            outputs: {},
-            timers: []
-        };
+    let {deviceId: id, deviceName: name, state, continuations, log} = json;
+
+    // Reset all device states
+    for (let device of Object.values(devices)) {
+        resetDeviceState(device);
     }
 
-    let device = devices[id];
+    // Get or create device
+    let device = devices[id] = devices[id] || {
+        id,
+        name,
+        states: [],
+        log: [],
+        inputs: {},
+        outputs: {},
+        timers: []
+    };
 
     // Update device state
     device.state = state;
 
-    device.log = [];
+    // Process continuations
+    processContinuations(device, continuations);
 
-    // set all inputs to inactive
-    Object.values(device.inputs).forEach(function (input) {
-        input.active = false;
-        input.update = false;
-    });
-
-    // set all outputs to inactive
-    Object.values(device.outputs).forEach(function (output) {
-        output.active = false;
-        output.update = false;
-    });
-
-    // delete all timers
-    device.timers = [];
-
-    continuations.forEach(function (continuation) {
-        let type = continuation.type;
-
-        // GroupValue (ga), GroupRead (ga), Scheduled (timerId, time (ISO 8601))
-
-        if (type == 'GroupValue') {
-            let key = continuation.ga;
-
-            // check if input exists, else create it
-            if (!device.inputs[key]) {
-                device.inputs[key] = {
-                    value: null,
-                    active: false
-                }
-            } else 
-                device.inputs[key].active = true;
-
-            device.inputs[key].update = true;
-        } else if (type == 'GroupRead') {
-            let key = continuation.ga;
-
-            // check if output exists, else create it
-            if (!device.outputs[key]) {
-                device.outputs[key] = {
-                    value: null,
-                    active: true
-                }
-            } else
-                device.outputs[key].active = true;
-
-            device.outputs[key].update = true;
-        } else if (type == 'Scheduled') {
-            let timerId = continuation.timerId;
-            let time = new Date(continuation.time);
-
-            // add timer
-            device.timers.push({
-                timerId: timerId,
-                time: time
-            });
-        }
-    });
-
-
-    json.log.forEach(function (log) {
-        let type = log.type;
-
-        if (type == 'Log') {
-            device.log.push(log.message);
-        } else if (type == 'KNXIn') {
-            let key = log.ga;
-            let value = showDpt(log.dpt);
-
-            device.inputs[key] = {
-                value: value,
-                active: true
-            }
-        } else if (type == 'KNXOut') {
-            let key = log.ga;
-            let value = showDpt(log.dpt);
-
-            if (!device.outputs[key]) {
-                device.outputs[key] = {
-                    value: value
-                }
-            } else
-                device.outputs[key].value = value;
-
-            device.outputs[key].update = true;
-        }
-    });
+    // Process logs
+    processLogs(device, log);
 
     updateDevices(devices);
+}
+
+function resetDeviceState(device) {
+    for (let input of Object.values(device.inputs)) {
+        input.active = false;
+        input.update = false;
+    }
+
+    for (let output of Object.values(device.outputs)) {
+        output.active = false;
+        output.update = false;
+    }
+
+    // Clear logs and timers
+    device.log = [];
+    device.timers = [];
+}
+
+function processContinuations(device, continuations) {
+    for (let continuation of continuations) {
+        let {type, ga, timerId, time} = continuation;
+
+        if (type === 'GroupValue' || type === 'GroupRead') {
+            let io = type === 'GroupValue' ? device.inputs : device.outputs;
+
+            io[ga] = io[ga] || { value: null };
+            io[ga].active = true;
+        } else if (type === 'Scheduled') {
+            device.timers.push({ timerId, time: new Date(time) });
+        }
+    }
+}
+
+function processLogs(device, logs) {
+    logs.forEach(log => {
+        let {type, ga, dpt} = log;
+
+        if (type === 'Log') {
+            device.log.push(log.message);
+        } else if (type === 'KNXIn' || type === 'KNXOut') {
+            let io = type === 'KNXIn' ? device.inputs : device.outputs;
+
+            io[ga] = io[ga] || { value: null };
+            io[ga].value = showDpt(dpt);
+            io[ga].update = true;
+        }
+    });
 }
 
 function showDpt(dpt) {
@@ -149,6 +110,16 @@ function showDpt(dpt) {
         // round value to 2 decimals
         let value = Math.round(dpt.value * 100) / 100;
         return value; // + ' (' + dpt.type + ')';
+    }
+
+    if (dpt.type == 'DPT10') {
+        // TimeOfDay
+        let {knxWeekDay, knxTimeOfDay} = dpt.value;
+
+        // split at . and take first part
+        let time = knxTimeOfDay.split('.')[0];
+
+        return time + " (" + knxWeekDay + ")";
     }
 
     return dpt.value; // + ' (' + dpt.type + ')';
@@ -175,7 +146,10 @@ function updateDevices(devicesDict) {
     allSections.select('.device-title').text(device => device.name);
     allSections.select('.inputs table').each((device, i, nodes) => updateIO(d3.select(nodes[i]), device.inputs, true));
     allSections.select('.outputs table').each((device, i, nodes) => updateIO(d3.select(nodes[i]), device.outputs, false));
-    allSections.select('.state').text(device => JSON.stringify(device.state, null, 1));
+
+    // update state, but only if not empty array
+    allSections.select('.state').text(device => Object.keys(device.state).length > 0 ? JSON.stringify(device.state, null, 2) : '');
+
     allSections.select('.logs').each((device, i, nodes) => updateLogs(d3.select(nodes[i]), device.log));
 
     const timers = allSections.select('.timers').selectAll('div').data(device => device.timers, d => d.timerId);
