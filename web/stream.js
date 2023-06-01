@@ -32,7 +32,7 @@ function inputEvent(json) {
 
     // Reset all device states
     for (let device of Object.values(devices)) {
-        resetDeviceState(device);
+        resetDeviceUpdate(device);
     }
 
     // Get or create device
@@ -49,6 +49,9 @@ function inputEvent(json) {
     // Update device state
     device.state = state;
 
+    // Reset device state
+    resetDeviceState(device);
+
     // Process continuations
     processContinuations(device, continuations);
 
@@ -58,15 +61,23 @@ function inputEvent(json) {
     updateDevices(devices);
 }
 
-function resetDeviceState(device) {
+function resetDeviceUpdate(device) {
     for (let input of Object.values(device.inputs)) {
-        input.active = false;
         input.update = false;
     }
 
     for (let output of Object.values(device.outputs)) {
-        output.active = false;
         output.update = false;
+    }
+}
+
+function resetDeviceState(device) {
+    for (let input of Object.values(device.inputs)) {
+        input.active = false;
+    }
+
+    for (let output of Object.values(device.outputs)) {
+        output.active = false;
     }
 
     // Clear logs and timers
