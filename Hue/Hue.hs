@@ -45,7 +45,13 @@ data HueConfig = HueConfig
 data HueContext = HueContext
   { config :: HueConfig
   , sendQueue :: TQueue HueCommand
+  , hueState :: TVar HueState
   }
+
+data HueState = HueState
+  { stateRooms :: [HD.Room]
+  , stateScenes :: [HD.Scene]
+  } deriving (Show)
 
 tlsSettings = TLSSettingsSimple
   { settingDisableCertificateValidation = True
@@ -69,7 +75,12 @@ initHue configFilename = do
     Left err -> error err
     Right config -> do
       sendQueue <- newTQueueIO
-      return $ HueContext config sendQueue
+
+      rooms <- getRooms config
+      scenes <- getScenes config
+      state <- newTVarIO $ HueState rooms scenes
+
+      return $ HueContext config sendQueue state
 
 runHue :: HueContext -> LoggingT IO ()
 runHue ctx = runReaderT hueLoop ctx
@@ -107,7 +118,6 @@ makeRequest config method url body = do
   manager <- newManager $ (mkManagerSettings tlsSettings Nothing)
   httpLbs req manager
 
-
 getResponse :: (FromJSON a) => HueConfig -> String -> IO [a]
 getResponse config endpoint = do
   putStrLn $ "GET " <> endpoint
@@ -131,8 +141,9 @@ filterRoomsByName name rooms = Prelude.filter (\r -> HD.metadataName (HD.roomMet
 
 setScene :: HueContext -> String -> String -> IO ()
 setScene ctx roomName sceneName = do
-  rooms <- filterRoomsByName roomName <$> getRooms (config ctx)
-  scenes <- getScenes (config ctx)
+  state <- readTVarIO $ hueState ctx
+  let rooms = filterRoomsByName roomName $ stateRooms state
+  let scenes = stateScenes state
 
   forM_ rooms $ \room -> do
     let scenes' = Prelude.filter (\s -> HD.sceneGroup s == (HD.Group (HD.roomId room) "room")) scenes
@@ -147,7 +158,8 @@ setScene ctx roomName sceneName = do
 
 setRoom :: HueContext -> String -> Bool -> IO ()
 setRoom ctx roomName on = do
-  rooms <- filterRoomsByName roomName <$> getRooms (config ctx)
+  state <- readTVarIO $ hueState ctx
+  let rooms = filterRoomsByName roomName $ stateRooms state
   let services = Prelude.concatMap HD.roomServices rooms
   let services' = Prelude.filter (\s -> HD.serviceRtype s == "grouped_light") services
   let serviceIds = Prelude.map HD.serviceRid services'
