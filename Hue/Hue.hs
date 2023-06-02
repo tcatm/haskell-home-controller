@@ -3,6 +3,7 @@
 module Hue.Hue
     ( initHue
     , runHue
+    , logSourceHue
     , HueCommand (..)
     , HueContext (..)
     )
@@ -32,6 +33,9 @@ import Control.Monad.Reader
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TChan
+
+logSourceHue :: LogSource
+logSourceHue = "Hue"
 
 data HueCommand = HueCommandScene String String
                 | HueCommandRoom String Bool
@@ -68,17 +72,22 @@ readConfig configFilename = runExceptT $ do
 
   return $ HueConfig host appKey
 
-initHue :: String -> IO (HueContext)
+initHue :: String -> LoggingT IO HueContext
 initHue configFilename = do
-  config <- readConfig configFilename
+  logInfoNS logSourceHue "Initializing Hue"
+  config <- liftIO $ readConfig configFilename
   case config of
     Left err -> error err
     Right config -> do
-      sendQueue <- newTQueueIO
+      sendQueue <- liftIO $ newTQueueIO
 
       rooms <- getRooms config
+      logDebugNS logSourceHue . pack $ "Found rooms: " <> show rooms
+
       scenes <- getScenes config
-      state <- newTVarIO $ HueState rooms scenes
+      logDebugNS logSourceHue . pack $ "Found scenes: " <> show scenes
+
+      state <- liftIO $ newTVarIO $ HueState rooms scenes
 
       return $ HueContext config sendQueue state
 
@@ -86,21 +95,26 @@ runHue :: HueContext -> LoggingT IO ()
 runHue ctx = runReaderT hueLoop ctx
 
 hueLoop :: ReaderT HueContext (LoggingT IO) ()
-hueLoop = forever $ do
+hueLoop = do
   ctx <- ask
-  command <- liftIO $ atomically $ readTQueue $ sendQueue ctx
+  lift $ loop ctx
+  where
+    loop ctx = do
+      command <- liftIO $ atomically $ readTQueue $ sendQueue ctx
 
-  case command of
-    HueCommandScene roomName sceneName -> do
-      liftIO $ putStrLn $ "Setting scene " <> sceneName <> " in room " <> roomName
-      liftIO $ setScene ctx roomName sceneName
-    HueCommandRoom roomName on -> do
-      liftIO $ putStrLn $ "Setting room " <> roomName <> " to " <> show on
-      liftIO $ setRoom ctx roomName on
+      case command of
+        HueCommandScene roomName sceneName -> do
+          logDebugNS logSourceHue . pack $ "Setting scene " <> sceneName <> " in room " <> roomName
+          setScene ctx roomName sceneName
+        HueCommandRoom roomName on -> do
+          logDebugNS logSourceHue . pack $ "Setting room " <> roomName <> " to " <> show on
+          setRoom ctx roomName on
+        
+      loop ctx
       
-prepareRequest :: HueConfig -> C.ByteString -> String -> L.ByteString -> IO (Request)
-prepareRequest config method path body = do
-  let req = defaultRequest
+prepareRequest :: HueConfig -> C.ByteString -> String -> L.ByteString -> Request
+prepareRequest config method path body =
+  defaultRequest
         { host = encodeUtf8 $ bridgeHost config
         , secure = True
         , port = 443
@@ -110,38 +124,36 @@ prepareRequest config method path body = do
         , requestBody = RequestBodyLBS body
         }
 
-  return req
-
-makeRequest :: HueConfig -> C.ByteString -> String -> L.ByteString -> IO (Response L.ByteString)
+makeRequest :: HueConfig -> C.ByteString -> String -> L.ByteString -> LoggingT IO (Response L.ByteString)
 makeRequest config method url body = do
-  req <- prepareRequest config method url body
-  manager <- newManager $ (mkManagerSettings tlsSettings Nothing)
-  httpLbs req manager
+  let req = prepareRequest config method url body
+  manager <- liftIO $ newManager $ (mkManagerSettings tlsSettings Nothing)
+  liftIO $ httpLbs req manager
 
-getResponse :: (FromJSON a) => HueConfig -> String -> IO [a]
+getResponse :: (FromJSON a) => HueConfig -> String -> LoggingT IO [a]
 getResponse config endpoint = do
-  putStrLn $ "GET " <> endpoint
+  logDebugNS logSourceHue . pack $ "GET " <> endpoint
   response <- makeRequest config "GET" endpoint ""
   let jsonBody = responseBody response
   let result = eitherDecode jsonBody :: (FromJSON a) => Either String (HD.Response a)
   case result of
     Left errMsg -> do
-      putStrLn $ "Error decoding response: " <> errMsg
+      logWarnNS logSourceHue . pack $ "Error decoding response: " <> errMsg
       return []
     Right resp -> return $ HD.responseData resp
 
-getRooms :: HueConfig -> IO [HD.Room]
+getRooms :: HueConfig -> LoggingT IO [HD.Room]
 getRooms config = getResponse config "/clip/v2/resource/room"
 
-getScenes :: HueConfig -> IO [HD.Scene]
+getScenes :: HueConfig -> LoggingT IO [HD.Scene]
 getScenes config = getResponse config "/clip/v2/resource/scene"
 
 filterRoomsByName :: String -> [HD.Room] -> [HD.Room]
 filterRoomsByName name rooms = Prelude.filter (\r -> HD.metadataName (HD.roomMetadata r) == name) rooms
 
-setScene :: HueContext -> String -> String -> IO ()
+setScene :: HueContext -> String -> String -> LoggingT IO ()
 setScene ctx roomName sceneName = do
-  state <- readTVarIO $ hueState ctx
+  state <- lift $ readTVarIO $ hueState ctx
   let rooms = filterRoomsByName roomName $ stateRooms state
   let scenes = stateScenes state
 
@@ -152,13 +164,13 @@ setScene ctx roomName sceneName = do
     forM_ scenes'' $ \scene -> do
       let url = "/clip/v2/resource/scene/" <> (toString $ HD.sceneId scene)
       let body = object [ "recall" .= object [ "action" .= ("active" :: Text) ] ]
-      putStrLn $ "PUT " <> url <> " " <> (show body)
+      logDebugNS logSourceHue . pack $ "PUT " <> url <> " " <> (show body)
       response <- makeRequest (config ctx) "PUT" url (encode body)
-      putStrLn $ show response
+      logDebugNS logSourceHue . pack $ show response
 
-setRoom :: HueContext -> String -> Bool -> IO ()
+setRoom :: HueContext -> String -> Bool -> LoggingT IO ()
 setRoom ctx roomName on = do
-  state <- readTVarIO $ hueState ctx
+  state <- lift $ readTVarIO $ hueState ctx
   let rooms = filterRoomsByName roomName $ stateRooms state
   let services = Prelude.concatMap HD.roomServices rooms
   let services' = Prelude.filter (\s -> HD.serviceRtype s == "grouped_light") services
@@ -168,30 +180,30 @@ setRoom ctx roomName on = do
 
   forM_ serviceIds $ \serviceId -> do
     let url = "/clip/v2/resource/grouped_light/" <> (toString serviceId)
-    putStrLn $ "PUT " <> url <> " " <> (show body)
+    logDebugNS logSourceHue . pack $ "PUT " <> url <> " " <> (show body)
     response <- makeRequest (config ctx) "PUT" url (encode body)
-    putStrLn $ show response
+    logDebugNS logSourceHue . pack $ show response
 
-listenForEvents :: HueConfig -> IO ()
-listenForEvents config = do
-  req <- prepareRequest config "GET" eventStreamPath ""
-  let req' = req { requestHeaders = [("Accept", "text/event-stream")] <> requestHeaders req }
-  manager <- newManager $ (mkManagerSettings tlsSettings Nothing) { managerResponseTimeout = responseTimeoutNone }
-  handle handleException $ do
-    withResponse req' manager $ \res -> do
-      let loop = do
-            bs <- brRead $ responseBody res
-            if C.null bs
-              then return ()
-              else do
-                putStrLn $ C.unpack bs
-                loop
-      loop
-  where
-    handleException :: IOException -> IO ()
-    handleException e = do
-        putStrLn "Error occurred while listening for events. Retrying..."
-        listenForEvents config
+-- listenForEvents :: HueConfig -> LoggingT IO ()
+-- listenForEvents config = do
+--   req <- prepareRequest config "GET" eventStreamPath ""
+--   let req' = req { requestHeaders = [("Accept", "text/event-stream")] <> requestHeaders req }
+--   manager <- newManager $ (mkManagerSettings tlsSettings Nothing) { managerResponseTimeout = responseTimeoutNone }
+--   handle handleException $ do
+--     withResponse req' manager $ \res -> do
+--       let loop = do
+--             bs <- brRead $ responseBody res
+--             if C.null bs
+--               then return ()
+--               else do
+--                 logDebugNS logSourceHue . pack $ C.unpack bs
+--                 loop
+--       loop
+--   where
+--     handleException :: IOException -> LoggingT IO ()
+--     handleException e = do
+--         logWarnNS logSourceHue "Error occurred while listening for events. Retrying..."
+--         listenForEvents config
 
 eventStreamPath :: String
 eventStreamPath = "/eventstream/clip/v2"

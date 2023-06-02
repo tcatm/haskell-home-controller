@@ -47,8 +47,9 @@ waitAllThreads actions = do
   liftIO $ mapM_ takeMVar syncVars
 
 logFilter :: LogSource -> LogLevel -> Bool
-logFilter logSourceKNX LevelDebug = False
-logFilter _ _ = True
+logFilter source level
+    | source == logSourceKNX && level == LevelDebug = False
+    | otherwise = True
 
 main :: IO ()
 main = do
@@ -61,7 +62,7 @@ main = do
     let Just config = mConfig
   
     runStdoutLoggingT $ filterLogger logFilter $ do
-      hueContext <- liftIO $ Hue.initHue "hueconfig.ini"
+      hueContext <- Hue.initHue "hueconfig.ini"
       deviceInput <- liftIO $ newTChanIO
       webQueue <- liftIO $ newTQueueIO
       knxContext <- createKNXContext knxGatewayHost knxGatewayPort (knxCallback deviceInput)
