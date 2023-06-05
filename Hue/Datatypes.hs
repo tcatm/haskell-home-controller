@@ -2,10 +2,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Hue.Datatypes
-    ( Metadata (..)
+    ( State (..)
+    , Metadata (..)
     , Room (..)
     , Scene (..)
-    , Response (..)
+    , HueResponse (..)
     , Service (..)
     , Group (..)
     , GroupedLight (..)
@@ -16,6 +17,13 @@ import Data.Aeson
 import Data.UUID
 import qualified Data.ByteString.Lazy as L
 import GHC.Generics
+
+data State = State
+  { stateRooms :: [Room]
+  , stateScenes :: [Scene]
+  , stateGroupedLights :: [GroupedLight]
+  , stateZones :: [Zone]
+  } deriving (Show)
 
 data Metadata = Metadata
   { metadataName :: String
@@ -119,12 +127,12 @@ instance FromJSON Service where
     <$> v .: "rid"
     <*> v .: "rtype"
 
-data Response a = Response
-  { responseErrors :: [String]
-  , responseData :: [a]
+data HueResponse a = HueResponse
+  { hueResponseErrors :: [String]
+  , hueResponseData :: [a]
   } deriving (Show, Generic)
 
-instance (FromJSON a) => FromJSON (Response a) where
-  parseJSON = withObject "Response" $ \v -> Response
+instance (FromJSON a) => FromJSON (HueResponse a) where
+  parseJSON = withObject "Response" $ \v -> HueResponse
     <$> v .: "errors"
     <*> v .: "data"

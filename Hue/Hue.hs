@@ -9,8 +9,7 @@ module Hue.Hue
     )
   where
 
-import qualified Hue.Datatypes as HD
-
+import Hue.Datatypes
 import Data.Ini
 import Data.Aeson
 import Data.Text
@@ -49,15 +48,8 @@ data HueConfig = HueConfig
 data HueContext = HueContext
   { config :: HueConfig
   , sendQueue :: TQueue HueCommand
-  , hueState :: TVar HueState
+  , hueState :: TVar State
   }
-
-data HueState = HueState
-  { stateRooms :: [HD.Room]
-  , stateScenes :: [HD.Scene]
-  , stateGroupedLights :: [HD.GroupedLight]
-  , stateZones :: [HD.Zone]
-  } deriving (Show)
 
 tlsSettings = TLSSettingsSimple
   { settingDisableCertificateValidation = True
@@ -83,21 +75,29 @@ initHue configFilename = do
     Right config -> do
       sendQueue <- liftIO $ newTQueueIO
 
-      rooms <- getRooms config
-      logDebugNS logSourceHue . pack $ "Found rooms: " <> show rooms
+      hueState <- initializeState config
 
-      scenes <- getScenes config
-      logDebugNS logSourceHue . pack $ "Found scenes: " <> show scenes
-
-      groupedLights <- getGroupedLights config
-      logDebugNS logSourceHue . pack $ "Found grouped lights: " <> show groupedLights
-
-      zones <- getZones config
-      logDebugNS logSourceHue . pack $ "Found zones: " <> show zones
-
-      state <- liftIO $ newTVarIO $ HueState rooms scenes groupedLights zones
+      state <- liftIO $ newTVarIO $ hueState
 
       return $ HueContext config sendQueue state
+
+initializeState :: HueConfig -> LoggingT IO State
+initializeState config = do
+  logInfoNS logSourceHue "Retrieving initial Hue state"
+
+  rooms <- getResponse config "/clip/v2/resource/room"
+  logDebugNS logSourceHue . pack $ "Found rooms: " <> show rooms
+
+  scenes <- getResponse config "/clip/v2/resource/scene"
+  logDebugNS logSourceHue . pack $ "Found scenes: " <> show scenes
+
+  groupedLights <- getResponse config "/clip/v2/resource/grouped_light"
+  logDebugNS logSourceHue . pack $ "Found grouped lights: " <> show groupedLights
+
+  zones <- getResponse config "/clip/v2/resource/zone"
+  logDebugNS logSourceHue . pack $ "Found zones: " <> show zones
+
+  return $ State rooms scenes groupedLights zones
 
 runHue :: HueContext -> LoggingT IO ()
 runHue ctx = runReaderT hueLoop ctx
@@ -143,27 +143,15 @@ getResponse config endpoint = do
   logDebugNS logSourceHue . pack $ "GET " <> endpoint
   response <- makeRequest config "GET" endpoint ""
   let jsonBody = responseBody response
-  let result = eitherDecode jsonBody :: (FromJSON a) => Either String (HD.Response a)
+  let result = eitherDecode jsonBody :: (FromJSON a) => Either String (HueResponse a)
   case result of
     Left errMsg -> do
       logWarnNS logSourceHue . pack $ "Error decoding response: " <> errMsg
       return []
-    Right resp -> return $ HD.responseData resp
+    Right resp -> return $ hueResponseData resp
 
-getRooms :: HueConfig -> LoggingT IO [HD.Room]
-getRooms config = getResponse config "/clip/v2/resource/room"
-
-getScenes :: HueConfig -> LoggingT IO [HD.Scene]
-getScenes config = getResponse config "/clip/v2/resource/scene"
-
-getGroupedLights :: HueConfig -> LoggingT IO [HD.GroupedLight]
-getGroupedLights config = getResponse config "/clip/v2/resource/grouped_light"
-
-getZones :: HueConfig -> LoggingT IO [HD.Zone]
-getZones config = getResponse config "/clip/v2/resource/zone"
-
-filterRoomsByName :: String -> [HD.Room] -> [HD.Room]
-filterRoomsByName name rooms = Prelude.filter (\r -> HD.metadataName (HD.roomMetadata r) == name) rooms
+filterRoomsByName :: String -> [Room] -> [Room]
+filterRoomsByName name rooms = Prelude.filter (\r -> metadataName (roomMetadata r) == name) rooms
 
 setScene :: HueContext -> String -> String -> LoggingT IO ()
 setScene ctx roomName sceneName = do
@@ -172,11 +160,11 @@ setScene ctx roomName sceneName = do
   let scenes = stateScenes state
 
   forM_ rooms $ \room -> do
-    let scenes' = Prelude.filter (\s -> HD.sceneGroup s == (HD.Group (HD.roomId room) "room")) scenes
-    let scenes'' = Prelude.filter (\s -> HD.metadataName (HD.sceneMetadata s) == sceneName) scenes'
+    let scenes' = Prelude.filter (\s -> sceneGroup s == (Group (roomId room) "room")) scenes
+    let scenes'' = Prelude.filter (\s -> metadataName (sceneMetadata s) == sceneName) scenes'
 
     forM_ scenes'' $ \scene -> do
-      let url = "/clip/v2/resource/scene/" <> (toString $ HD.sceneId scene)
+      let url = "/clip/v2/resource/scene/" <> (toString $ sceneId scene)
       let body = object [ "recall" .= object [ "action" .= ("active" :: Text) ] ]
       logDebugNS logSourceHue . pack $ "PUT " <> url <> " " <> (show body)
       response <- makeRequest (config ctx) "PUT" url (encode body)
@@ -186,9 +174,9 @@ setRoom :: HueContext -> String -> Bool -> LoggingT IO ()
 setRoom ctx roomName on = do
   state <- lift $ readTVarIO $ hueState ctx
   let rooms = filterRoomsByName roomName $ stateRooms state
-  let services = Prelude.concatMap HD.roomServices rooms
-  let services' = Prelude.filter (\s -> HD.serviceRtype s == "grouped_light") services
-  let serviceIds = Prelude.map HD.serviceRid services'
+  let services = Prelude.concatMap roomServices rooms
+  let services' = Prelude.filter (\s -> serviceRtype s == "grouped_light") services
+  let serviceIds = Prelude.map serviceRid services'
 
   let body = object [ "on" .= object [ "on" .= on ] ]
 
