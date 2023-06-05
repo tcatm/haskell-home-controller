@@ -16,7 +16,7 @@ import Data.Text
 import Data.Text.Encoding
 import Data.UUID
 import Data.Map
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, maybeToList)
 import qualified Data.HashMap.Strict as HashMap
 import GHC.Generics
 import qualified Data.ByteString.Char8 as C
@@ -109,7 +109,7 @@ hueLoop = do
   logger <- askLoggerIO
 
   thread <- liftIO $ forkIO $ do
-    runLoggingT (listenForEvents ctx) logger
+    runLoggingT (listenForEvents ctx Nothing) logger
 
   lift $ loop ctx
 
@@ -193,13 +193,17 @@ setRoom ctx roomName on = do
     response <- makeRequest (config ctx) "PUT" url (encode body)
     logDebugNS logSourceHue . pack $ show response
 
-listenForEvents :: HueContext -> LoggingT IO ()
-listenForEvents ctx = do
+listenForEvents :: HueContext -> Maybe Text -> LoggingT IO ()
+listenForEvents ctx lastEventId = do
   let req = prepareRequest (config ctx) "GET" eventStreamPath ""
-  let req' = req { requestHeaders = [("Accept", "text/event-stream")] <> requestHeaders req }
+  let headers = [ ("Accept", "text/event-stream") ]
+             <> maybeToList ((\id -> ("Last-Event-ID", encodeUtf8 id)) <$> lastEventId)
+             <> requestHeaders req
+  let req' = req { requestHeaders = headers }
   manager <- liftIO $ newManager $ (mkManagerSettings tlsSettings Nothing) { managerResponseTimeout = responseTimeoutNone }
   logger <- askLoggerIO
-  liftIO $ handle (handleException logger) $ do
+  lastEventIdVar <- liftIO $ newTVarIO lastEventId
+  liftIO $ handle (handleException logger lastEventIdVar) $ do
     withResponse req' manager $ \res -> do
       let loop = do
             bs <- liftIO $ brRead $ responseBody res
@@ -211,12 +215,13 @@ listenForEvents ctx = do
 
       runLoggingT loop logger
   where
-    handleException logger e = runLoggingT (handleException' e) logger
+    handleException logger lastEventIDVar e = runLoggingT (handleException' lastEventIDVar e) logger
 
-    handleException' :: IOException -> LoggingT IO ()
-    handleException' e = do
+    handleException' :: TVar (Maybe Text) -> IOException -> LoggingT IO ()
+    handleException' lastEventIDVar e = do
+        lastEventId <- liftIO $ readTVarIO lastEventIDVar
         logWarnNS logSourceHue "Error occurred while listening for events. Retrying..."
-        listenForEvents ctx
+        listenForEvents ctx lastEventId
 
 eventStreamPath :: String
 eventStreamPath = "/eventstream/clip/v2"
