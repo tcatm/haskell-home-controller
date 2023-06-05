@@ -105,7 +105,14 @@ runHue ctx = runReaderT hueLoop ctx
 hueLoop :: ReaderT HueContext (LoggingT IO) ()
 hueLoop = do
   ctx <- ask
+
+  logger <- askLoggerIO
+
+  thread <- liftIO $ forkIO $ do
+    runLoggingT (listenForEvents ctx) logger
+
   lift $ loop ctx
+
   where
     loop ctx = do
       command <- liftIO $ atomically $ readTQueue $ sendQueue ctx
@@ -186,26 +193,30 @@ setRoom ctx roomName on = do
     response <- makeRequest (config ctx) "PUT" url (encode body)
     logDebugNS logSourceHue . pack $ show response
 
--- listenForEvents :: HueConfig -> LoggingT IO ()
--- listenForEvents config = do
---   req <- prepareRequest config "GET" eventStreamPath ""
---   let req' = req { requestHeaders = [("Accept", "text/event-stream")] <> requestHeaders req }
---   manager <- newManager $ (mkManagerSettings tlsSettings Nothing) { managerResponseTimeout = responseTimeoutNone }
---   handle handleException $ do
---     withResponse req' manager $ \res -> do
---       let loop = do
---             bs <- brRead $ responseBody res
---             if C.null bs
---               then return ()
---               else do
---                 logDebugNS logSourceHue . pack $ C.unpack bs
---                 loop
---       loop
---   where
---     handleException :: IOException -> LoggingT IO ()
---     handleException e = do
---         logWarnNS logSourceHue "Error occurred while listening for events. Retrying..."
---         listenForEvents config
+listenForEvents :: HueContext -> LoggingT IO ()
+listenForEvents ctx = do
+  let req = prepareRequest (config ctx) "GET" eventStreamPath ""
+  let req' = req { requestHeaders = [("Accept", "text/event-stream")] <> requestHeaders req }
+  manager <- liftIO $ newManager $ (mkManagerSettings tlsSettings Nothing) { managerResponseTimeout = responseTimeoutNone }
+  logger <- askLoggerIO
+  liftIO $ handle (handleException logger) $ do
+    withResponse req' manager $ \res -> do
+      let loop = do
+            bs <- liftIO $ brRead $ responseBody res
+            if C.null bs
+              then return ()
+              else do
+                logDebugNS logSourceHue . pack $ C.unpack bs
+                loop
+
+      runLoggingT loop logger
+  where
+    handleException logger e = runLoggingT (handleException' e) logger
+
+    handleException' :: IOException -> LoggingT IO ()
+    handleException' e = do
+        logWarnNS logSourceHue "Error occurred while listening for events. Retrying..."
+        listenForEvents ctx
 
 eventStreamPath :: String
 eventStreamPath = "/eventstream/clip/v2"
