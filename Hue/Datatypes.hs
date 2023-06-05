@@ -8,6 +8,8 @@ module Hue.Datatypes
     , Response (..)
     , Service (..)
     , Group (..)
+    , GroupedLight (..)
+    , Zone (..)
     ) where
 
 import Data.Aeson
@@ -23,6 +25,44 @@ instance FromJSON Metadata where
   parseJSON = withObject "Metadata" $ \v -> Metadata
     <$> v .: "name"
 
+data On = On
+  { onOn :: Bool
+  } deriving (Show, Generic)
+
+instance FromJSON On where
+  parseJSON = withObject "On" $ \v -> On
+    <$> v .: "on"
+
+instance ToJSON On where
+  toJSON (On on) = object
+    [ "on" .= on
+    ]
+
+data Dimming = Dimming
+  { dimmingBrightness :: Double
+  } deriving (Show, Generic)
+
+instance FromJSON Dimming where
+  parseJSON = withObject "Dimming" $ \v -> Dimming
+    <$> v .: "brightness"
+
+instance ToJSON Dimming where
+  toJSON (Dimming brightness) = object
+    [ "brightness" .= brightness
+    ]
+
+data GroupedLight = GroupedLight
+  { groupedLightId :: UUID
+  , groupedLightOn :: On
+  , groupedLightDimming :: Maybe Dimming
+  } deriving (Show, Generic)
+
+instance FromJSON GroupedLight where
+  parseJSON = withObject "GroupedLight" $ \v -> GroupedLight
+    <$> v .: "id"
+    <*> v .: "on"
+    <*> v .:? "dimming"
+
 data Room = Room
   { roomId :: UUID
   , roomMetadata :: Metadata
@@ -31,6 +71,18 @@ data Room = Room
 
 instance FromJSON Room where
   parseJSON = withObject "Room" $ \v -> Room
+    <$> v .: "id"
+    <*> v .: "metadata"
+    <*> v .: "services"
+
+data Zone = Zone
+  { zoneId :: UUID
+  , zoneMetadata :: Metadata
+  , zoneServices :: [Service]
+  } deriving (Show, Generic)
+
+instance FromJSON Zone where
+  parseJSON = withObject "Zone" $ \v -> Zone
     <$> v .: "id"
     <*> v .: "metadata"
     <*> v .: "services"

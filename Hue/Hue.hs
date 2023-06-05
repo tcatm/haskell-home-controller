@@ -55,6 +55,8 @@ data HueContext = HueContext
 data HueState = HueState
   { stateRooms :: [HD.Room]
   , stateScenes :: [HD.Scene]
+  , stateGroupedLights :: [HD.GroupedLight]
+  , stateZones :: [HD.Zone]
   } deriving (Show)
 
 tlsSettings = TLSSettingsSimple
@@ -87,7 +89,13 @@ initHue configFilename = do
       scenes <- getScenes config
       logDebugNS logSourceHue . pack $ "Found scenes: " <> show scenes
 
-      state <- liftIO $ newTVarIO $ HueState rooms scenes
+      groupedLights <- getGroupedLights config
+      logDebugNS logSourceHue . pack $ "Found grouped lights: " <> show groupedLights
+
+      zones <- getZones config
+      logDebugNS logSourceHue . pack $ "Found zones: " <> show zones
+
+      state <- liftIO $ newTVarIO $ HueState rooms scenes groupedLights zones
 
       return $ HueContext config sendQueue state
 
@@ -147,6 +155,12 @@ getRooms config = getResponse config "/clip/v2/resource/room"
 
 getScenes :: HueConfig -> LoggingT IO [HD.Scene]
 getScenes config = getResponse config "/clip/v2/resource/scene"
+
+getGroupedLights :: HueConfig -> LoggingT IO [HD.GroupedLight]
+getGroupedLights config = getResponse config "/clip/v2/resource/grouped_light"
+
+getZones :: HueConfig -> LoggingT IO [HD.Zone]
+getZones config = getResponse config "/clip/v2/resource/zone"
 
 filterRoomsByName :: String -> [HD.Room] -> [HD.Room]
 filterRoomsByName name rooms = Prelude.filter (\r -> HD.metadataName (HD.roomMetadata r) == name) rooms
