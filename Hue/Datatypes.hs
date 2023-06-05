@@ -11,6 +11,8 @@ module Hue.Datatypes
     , Group (..)
     , GroupedLight (..)
     , Zone (..)
+    , Event (..)
+    , EventType (..)
     ) where
 
 import Data.Aeson
@@ -135,4 +137,28 @@ data HueResponse a = HueResponse
 instance (FromJSON a) => FromJSON (HueResponse a) where
   parseJSON = withObject "Response" $ \v -> HueResponse
     <$> v .: "errors"
+    <*> v .: "data"
+
+data EventType = EventUpdate | EventCreate | EventDelete
+  deriving (Show, Generic)
+
+instance FromJSON EventType where
+  parseJSON = withText "EventType" $ \v -> case v of
+    "update" -> return EventUpdate
+    "create" -> return EventCreate
+    "delete" -> return EventDelete
+    _ -> fail "Unknown event type"
+
+data Event = Event
+  { eventCreationtime :: String
+  , eventId :: UUID
+  , eventType :: EventType
+  , eventData :: [Value]
+  } deriving (Show, Generic)
+
+instance FromJSON Event where
+  parseJSON = withObject "Event" $ \v -> Event
+    <$> v .: "creationtime"
+    <*> v .: "id"
+    <*> v .: "type"
     <*> v .: "data"

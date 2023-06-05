@@ -15,7 +15,7 @@ import Data.Aeson
 import Data.Text
 import Data.Text.Encoding
 import Data.UUID
-import Data.Map
+import qualified Data.Map as Map
 import Data.Maybe (fromJust, maybeToList)
 import qualified Data.HashMap.Strict as HashMap
 import GHC.Generics
@@ -24,7 +24,7 @@ import qualified Data.ByteString.Lazy as L
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
 import Network.Connection
-import Control.Exception (handle, IOException)
+import Control.Exception (catch, IOException)
 import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.Except
@@ -32,6 +32,8 @@ import Control.Monad.Reader
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TChan
+
+import Text.Show.Pretty (ppShow)
 
 logSourceHue :: LogSource
 logSourceHue = "Hue"
@@ -109,7 +111,7 @@ hueLoop = do
   logger <- askLoggerIO
 
   thread <- liftIO $ forkIO $ do
-    runLoggingT (listenForEvents ctx Nothing) logger
+    runLoggingT (listenForEvents ctx $ Just "0:0") logger
 
   lift $ loop ctx
 
@@ -203,25 +205,71 @@ listenForEvents ctx lastEventId = do
   manager <- liftIO $ newManager $ (mkManagerSettings tlsSettings Nothing) { managerResponseTimeout = responseTimeoutNone }
   logger <- askLoggerIO
   lastEventIdVar <- liftIO $ newTVarIO lastEventId
-  liftIO $ handle (handleException logger lastEventIdVar) $ do
-    withResponse req' manager $ \res -> do
-      let loop = do
-            bs <- liftIO $ brRead $ responseBody res
-            if C.null bs
-              then return ()
-              else do
-                logDebugNS logSourceHue . pack $ C.unpack bs
-                loop
+  liftIO $ catch (makeRequest logger lastEventIdVar req' manager) $ \e ->
+    runLoggingT ( do 
+      handleException lastEventIdVar e
+      listenForEvents ctx lastEventId
+    ) logger
 
-      runLoggingT loop logger
   where
-    handleException logger lastEventIDVar e = runLoggingT (handleException' lastEventIDVar e) logger
+    makeRequest logger lastEventIdVar req manager = do
+      withResponse req manager $ \res -> do
+        let loop = do
+              bs <- liftIO $ brRead $ responseBody res
+              if C.null bs
+                then return ()
+                else do
+                  let messages = splitOnMessages bs
+                  mapM_ (handleMessage ctx lastEventIdVar) messages
+                  loop
 
-    handleException' :: TVar (Maybe Text) -> IOException -> LoggingT IO ()
-    handleException' lastEventIDVar e = do
+        runLoggingT loop logger
+
+    handleException :: TVar (Maybe Text) -> IOException -> LoggingT IO ()
+    handleException lastEventIDVar e = do
         lastEventId <- liftIO $ readTVarIO lastEventIDVar
         logWarnNS logSourceHue "Error occurred while listening for events. Retrying..."
-        listenForEvents ctx lastEventId
+
+    splitOnMessages :: C.ByteString -> [C.ByteString]
+    splitOnMessages bs = splitOnMessages' bs []
+      where
+        splitOnMessages' bs acc =
+          let (msg, rest) = C.breakSubstring "\n\n" bs
+          in if C.null rest
+               then acc
+               else splitOnMessages' (C.drop 2 rest) (acc <> [msg])
+
+    handleMessage :: HueContext -> TVar (Maybe Text) -> C.ByteString -> LoggingT IO ()
+    handleMessage ctx lastEventIdVar msg = do
+      let lines = C.split '\n' msg
+
+      let lines' = Prelude.map (C.breakSubstring ": ") lines
+      let events = Prelude.map (\(k, v) -> (k, C.drop 2 v)) lines'
+      let map = Map.fromList events
+      let eventId = Map.lookup "id" map
+
+      case eventId of
+        Just id -> liftIO $ atomically $ writeTVar lastEventIdVar (Just $ decodeUtf8 id)
+        Nothing -> return ()
+
+      let payload = Map.lookup "data" map
+
+      case payload of
+        Nothing -> return ()
+        Just d -> do
+          let json = eitherDecode $ L.fromStrict d :: Either String [Event]
+          case json of
+            Left err -> do
+              logWarnNS logSourceHue $ pack $ "Error decoding event: " <> err <> " " <> show d
+              return ()
+            Right e -> do
+              logDebugNS logSourceHue $ pack $ "Received message (id = " <> (show eventId) <> "): " <> show e
+              mapM_ (handleEvent ctx) e
+
+handleEvent :: HueContext -> Event -> LoggingT IO ()
+handleEvent ctx event = do
+  let data' = eventData event
+  liftIO $ mapM_ (putStrLn . ppShow) data'
 
 eventStreamPath :: String
 eventStreamPath = "/eventstream/clip/v2"
