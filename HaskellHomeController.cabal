@@ -1,7 +1,7 @@
 cabal-version: 3.0
 name: haskell-home-controller
 version: 0.0.0.1
-executable Main
+executable homecontrol
   main-is: Main.hs
   other-modules:
     APDU
@@ -20,23 +20,35 @@ executable Main
     TimeSender
     Webinterface
   build-depends:
+    aeson<=2,
+    async,
     base,
-    pretty-terminal,
-    aeson,
+    binary,
+    bytestring,
+    conduit,
+    conduit-extra,
+    connection,
+    containers,
+    hashable,
+    hashable,
+    http-client,
     http-client-tls,
     http-conduit,
-    time,
-    yesod,
-    containers,
+    ini,
     monad-logger,
-    stm,
-    binary,
-    split,
-    time,
-    bytestring,
-    hashable,
     mtl,
-    transformers,
     network,
-    text
+    pretty-show,
+    pretty-terminal,
+    scientific,
+    split,
+    stm,
+    text,
+    time,
+    transformers,
+    unordered-containers,
+    uuid,
+    vector,
+    yesod,
+    yesod-static
   default-language: Haskell2010

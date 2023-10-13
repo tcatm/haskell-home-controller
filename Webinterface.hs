@@ -178,13 +178,13 @@ getStreamR = do
     respondSource "text/event-stream" $ do
         sendFlush
         let loop = do
-            entry <- liftIO $ atomically $ readEitherTChan replayChan origChan
-            let idLBS = C.pack $ show $ entryId entry
-            let json = encode $ entryData entry
-            let event = "id: " <> idLBS <> "\ndata: " <> json <> "\n\n"
-            sendChunkLBS event
-            sendFlush
-            loop
+              entry <- liftIO $ atomically $ readEitherTChan replayChan origChan
+              let idLBS = C.pack $ show $ entryId entry
+              let json = encode $ entryData entry
+              let event = "id: " <> idLBS <> "\ndata: " <> json <> "\n\n"
+              sendChunkLBS event
+              sendFlush
+              loop
         loop
 
 webinterface :: TQueue Value -> IO ()
