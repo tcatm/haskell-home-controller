@@ -25,6 +25,8 @@ config = Config
                 , presenceDevice
                 , sceneMultiplexer
                 , hueScenes
+                , szeneGesamt
+                , poolDemultiplexer
                 ]
     }
 
@@ -94,10 +96,10 @@ data SceneMultiplexerConfig = SceneMultiplexerConfig
 
 sceneMultiplexerConfig = SceneMultiplexerConfig
     { sceneMultiplexerOutputGA = GroupAddress 0 1 0
-    , sceneMultiplexerEntries = [ SceneMultiplexerEntry (GroupAddress 0 1 3) 0 3    -- HWR
-                                , SceneMultiplexerEntry (GroupAddress 0 1 4) 3 4    -- Küche
-                                , SceneMultiplexerEntry (GroupAddress 0 1 5) 7 4    -- Wohnzimmer
-                                , SceneMultiplexerEntry (GroupAddress 0 1 2) 11 4   -- Diele
+    , sceneMultiplexerEntries = [ SceneMultiplexerEntry (GroupAddress 0 1 3) 0 4    -- HWR
+                                , SceneMultiplexerEntry (GroupAddress 0 1 4) 4 4    -- Küche
+                                , SceneMultiplexerEntry (GroupAddress 0 1 5) 8 4    -- Wohnzimmer
+                                , SceneMultiplexerEntry (GroupAddress 0 1 2) 12 4   -- Diele
                                 ]
     }
 
@@ -117,20 +119,58 @@ sceneMultiplexerF config = do
                 debug $ "Mapped to " <> show outputValue <> " on " <> show outputGA <> " (save: " <> show save <> ")"
                 groupWrite outputGA $ DPT18_1 (save, outputValue)
 
-hueScenes :: Device
-hueScenes = makeDevice "Hue Szenen" () hueScenesF
+hueScenesConfig = [ (GroupAddress 0 1 18, "Hobbyraum")
+                  , (GroupAddress 0 1 12, "Pool")
+                  , (GroupAddress 0 1 13, "Wintergarten")
+                  , (GroupAddress 0 1 9, "Hauptbad")
+                  ]
 
-hueScenesF :: DeviceM () ()
-hueScenesF = do
-    let sceneGA = GroupAddress 0 1 18
-    watchDPT18_1 sceneGA $ \(save, scene) -> do
-        unless save $ do
+hueScenes :: Device
+hueScenes = makeDevice "Hue Szenen" () $ hueScenesF hueScenesConfig
+
+hueScenesF :: [(GroupAddress, String)] -> DeviceM () ()
+hueScenesF config = do
+    forM_ config $ \(ga, name) -> do
+        watchDPT18_1 ga $ \(save, scene) -> unless save $ do
             case scene of
                 0 -> do
                     debug "Hue: Off"
-                    hueSetRoomOn "Hobbyraum" False
+                    hueSetRoomOn name False
                 _ -> do
                     debug $ "Hue scene: " <> show scene
                     let sceneString = show scene
 
-                    hueActivateScene "Hobbyraum" sceneString
+                    hueActivateScene name sceneString
+
+
+szeneGesamt :: Device
+szeneGesamt = makeDevice "Szene Gesamt" () $ szeneGesamtF
+
+szeneGesamtF :: DeviceM () ()
+szeneGesamtF = do
+    let gas = [ GroupAddress 0 1 i | i <- [2..23] ]
+    watchDPT18_1 (GroupAddress 0 1 1) $ \(save, scene) -> unless save $ do
+        debug $ "Szene Gesamt: " <> show scene
+        forM_ gas $ \ga -> groupWrite ga $ DPT18_1 (False, scene)
+
+poolDemultiplexer :: Device
+poolDemultiplexer = makeDevice "Pool Demultiplexer" Map.empty poolDemultiplexerF
+
+poolDemultiplexerF :: DeviceM (Map.Map Int Bool) ()
+poolDemultiplexerF = do
+    let inputGA = GroupAddress 3 1 0
+    let items = [106, 107, 101, 108, 102, 109, 104, 103]
+    let statusGAs = [ GroupAddress 5 2 i | i <- items ]
+    let controlGAs = [ GroupAddress 5 1 i | i <- items ]
+
+    -- forM_ with index
+    forM_ (zip [0..] statusGAs) $ \(i, ga) -> do
+        watchDPT1 ga $ \value -> do
+            modify $ Map.insert i value
+
+    watchDPT5 inputGA $ \value -> do
+        let value' = fromIntegral value
+        unless (value' < 0 || value' >= length controlGAs) $ do
+            let ga = controlGAs !! value'
+            state <- gets $ Map.findWithDefault False value'
+            groupWrite ga $ DPT1 $ not state
