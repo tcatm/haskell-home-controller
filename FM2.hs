@@ -196,63 +196,85 @@ daliScenesF config = do
 
 -- | State for the Garagenlicht device.
 data GaragenlichtState = GaragenlichtState
-    { insideDoor :: Bool   -- ^ State of the inside door (0/7/3)
-    , outsideDoor :: Bool  -- ^ State of the outside door (0/7/4)
-    , lastScene :: Int     -- ^ Last known scene (from 0/1/11)
+    { insideDoor  :: Bool  -- ^ Inside door state (0/7/3)
+    , outsideDoor :: Bool  -- ^ Outside door state (0/7/4)
+    , lastScene   :: Int   -- ^ Last known scene from 0/1/11
+    , autoScene   :: Bool  -- ^ True if the scene was set automatically
     } deriving (Show, Generic)
 
 instance ToJSON GaragenlichtState
 
--- | Initial state: both doors closed and light off (scene 0).
+-- | Initial state: both doors closed, light off (scene 0).  
+--   (autoScene is True initially so that a rising edge can trigger auto-dim.)
 garagenlichtInitialState :: GaragenlichtState
 garagenlichtInitialState = GaragenlichtState
-    { insideDoor = False
+    { insideDoor  = False
     , outsideDoor = False
-    , lastScene = 0
+    , lastScene   = 0
+    , autoScene   = True
     }
 
 -- | The Garagenlicht device.
 garagenlicht :: Device
 garagenlicht = makeDevice "Garagenlicht" garagenlichtInitialState garagenlichtF
 
--- | Device behavior function.
+-- | Helper: count how many doors are open.
+openDoorCount :: GaragenlichtState -> Int
+openDoorCount s = (if insideDoor s then 1 else 0) + (if outsideDoor s then 1 else 0)
+
+-- | Deduplicated handler for door sensor events.
+--   It takes a getter and updater for the door state, the scene group address,
+--   and the new sensor state.
+handleDoorEvent :: (GaragenlichtState -> Bool)
+                -> (Bool -> GaragenlichtState -> GaragenlichtState)
+                -> GroupAddress
+                -> Bool
+                -> DeviceM GaragenlichtState ()
+handleDoorEvent getDoor updateDoor sceneGA newState = do
+    oldState <- gets getDoor
+    modify $ \s -> updateDoor newState s
+    if (not oldState && newState) then do  -- Rising edge: door opened.
+         st <- gets id
+         let openCount = openDoorCount st
+         -- If exactly one door is now open and the light is off,
+         -- automatically turn on the dimmed scene.
+         when (openCount == 1 && lastScene st == 0) $ do
+              debug "Door rising edge: one door open and light off, setting scene to dimmed (3)."
+              groupWrite sceneGA (DPT18_1 (False, 3))
+              modify $ \s -> s { lastScene = 3, autoScene = True }
+    else if (oldState && not newState) then do  -- Falling edge: door closed.
+         st <- gets id
+         let openCount = openDoorCount st
+         -- If all doors are closed and the light was auto-set to dimmed,
+         -- automatically turn the light off.
+         when (openCount == 0 && lastScene st == 3 && autoScene st) $ do
+              debug "Door falling edge: all doors closed and light auto-dimmed, turning light off (0)."
+              groupWrite sceneGA (DPT18_1 (False, 0))
+              modify $ \s -> s { lastScene = 0, autoScene = True }
+    else
+         return ()
+
+-- | Device behavior.
 garagenlichtF :: DeviceM GaragenlichtState ()
 garagenlichtF = do
     let insideDoorGA  = GroupAddress 0 7 3
     let outsideDoorGA = GroupAddress 0 7 4
     let sceneGA       = GroupAddress 0 1 11
 
-    -- Watch the inside door sensor.
-    watchDPT1 insideDoorGA $ \state -> do
-        debug $ "Garagenlicht: inside door state: " <> show state
-        modify $ \s -> s { insideDoor = state }
-        checkAndSetScene sceneGA
+    -- Watch inside door sensor.
+    watchDPT1 insideDoorGA $ \newState ->
+        handleDoorEvent insideDoor (\new s -> s { insideDoor = new }) sceneGA newState
 
-    -- Watch the outside door sensor.
-    watchDPT1 outsideDoorGA $ \state -> do
-        debug $ "Garagenlicht: outside door state: " <> show state
-        modify $ \s -> s { outsideDoor = state }
-        checkAndSetScene sceneGA
+    -- Watch outside door sensor.
+    watchDPT1 outsideDoorGA $ \newState ->
+        handleDoorEvent outsideDoor (\new s -> s { outsideDoor = new }) sceneGA newState
 
-    -- Watch the scene input to keep the last scene updated.
+    -- Watch the scene input. For non-save events, update our state.
+    -- We compute the expected auto scene: if one door is open, we expect 3; otherwise 0.
     watchDPT18_1 sceneGA $ \(save, scene) -> unless save $ do
-        debug $ "Garagenlicht: scene input: " <> show scene
-        modify $ \s -> s { lastScene = scene }
-        checkAndSetScene sceneGA
-
--- | Check the current state and update the scene if needed.
-checkAndSetScene :: GroupAddress -> DeviceM GaragenlichtState ()
-checkAndSetScene sceneGA = do
-    st <- gets id
-    let doorsOpen    = insideDoor st || outsideDoor st
-        currentScene = lastScene st
-    if doorsOpen && currentScene == 0 then do
-        debug "Garagenlicht: A door opened and scene was off (0), setting scene to dimmed (3)."
-        groupWrite sceneGA (DPT18_1 (False, 3))
-        modify $ \s -> s { lastScene = 3 }
-    else if not (insideDoor st) && not (outsideDoor st) && currentScene == 3 then do
-        debug "Garagenlicht: Both doors closed and scene was dimmed (3), setting scene to off (0)."
-        groupWrite sceneGA (DPT18_1 (False, 0))
-        modify $ \s -> s { lastScene = 0 }
-    else
-        return ()
+        debug $ "Garagenlicht: scene input received: " <> show scene
+        st <- gets id
+        let expected = if openDoorCount st == 1 then 3 else 0
+        if scene == expected
+           then modify $ \s -> s { lastScene = scene, autoScene = True }
+           else modify $ \s -> s { lastScene = scene, autoScene = False }
