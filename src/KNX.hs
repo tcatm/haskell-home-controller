@@ -65,10 +65,12 @@ hexWithSpaces = pack . concatMap (printf "%02x ") . LBS.unpack
 createTCPConnection :: HostName -> ServiceName -> IO Socket
 createTCPConnection host port = do
     addrInfos <- getAddrInfo (Just defaultHints {addrSocketType = Stream}) (Just host) (Just port)
-    let serverAddr = head addrInfos
-    sock <- socket (addrFamily serverAddr) (addrSocketType serverAddr) (addrProtocol serverAddr)
-    connect sock (addrAddress serverAddr)
-    return sock
+    case addrInfos of
+      [] -> ioError (userError "No address info found")
+      (serverAddr:_) -> do
+          sock <- socket (addrFamily serverAddr) (addrSocketType serverAddr) (addrProtocol serverAddr)
+          connect sock (addrAddress serverAddr)
+          return sock
 
 createKNXContext :: HostName -> ServiceName -> KNXCallback -> LoggingT IO KNXContext
 createKNXContext host port cb = do

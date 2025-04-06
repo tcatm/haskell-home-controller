@@ -15,10 +15,13 @@ module KNXAddress
 import Data.Bits
 import Data.Word
 import Data.List.Split (splitOn)
+import Data.String (fromString)
 import Text.Read (readMaybe)
 import Text.Printf (printf)
 import qualified Data.Text as T
 import Data.Aeson
+import Data.Aeson.Key (Key)
+import Data.Aeson.KeyMap ()
 import Data.Aeson.Encoding (text)
 import GHC.Generics
 
@@ -60,9 +63,11 @@ instance Read GroupAddress where
     Nothing -> []
 
 instance ToJSONKey GroupAddress where
-  toJSONKey = ToJSONKeyText -- This specifies that we're producing a Text key
-    (\(GroupAddress main middle sub) -> T.pack $ showTriplet main middle sub '/') -- This is the conversion function
-    (text . (\(GroupAddress main middle sub) -> T.pack $ showTriplet main middle sub '/')) -- This is used for `aeson >= 0.11`
+  toJSONKey = ToJSONKeyText
+    (\(GroupAddress main middle sub) ->
+         fromString $ showTriplet main middle sub '/')
+    (text . (\(GroupAddress main middle sub) ->
+         fromString $ showTriplet main middle sub '/'))
 
 conv :: Int -> Int -> Int -> Int -> Int -> Word16
 conv s1 s2 mainG middleG subG = fromIntegral $ (mainG `shiftL` s1) + (middleG `shiftL` s2) + subG

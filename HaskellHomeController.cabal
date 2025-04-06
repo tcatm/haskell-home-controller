@@ -1,17 +1,22 @@
 cabal-version: 3.0
-name: haskell-home-controller
+name: HaskellHomeController
 version: 0.0.0.1
 executable homecontrol
+  hs-source-dirs: src
   main-is: Main.hs
   other-modules:
     APDU
     BlindsDevice
+    Config
     Console
-    DPTs
     Device
     DeviceRunner
+    DeviceTypes
+    DPTs
     ElphiWohnung
     FM2
+    Hue.Datatypes
+    Hue.Hue
     KNX
     KNXAddress
     KNXDatatypes
@@ -21,7 +26,7 @@ executable homecontrol
     TimeSender
     Webinterface
   build-depends:
-    aeson<=2,
+    aeson,
     async,
     base,
     binary,

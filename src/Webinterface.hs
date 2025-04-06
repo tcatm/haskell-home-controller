@@ -15,7 +15,7 @@ import           Control.Concurrent     (forkIO, threadDelay)
 import           Control.Concurrent.STM
 import           Control.Monad.Trans.State as StateT
 import           Data.Aeson             (Value, encode)
-import qualified Data.HashMap.Strict    as HashMap
+import qualified Data.Aeson.KeyMap      as KeyMap
 import           Data.IntMap            (IntMap)
 import qualified Data.IntMap            as IntMap
 import           Data.List              (nubBy, partition)
@@ -26,25 +26,27 @@ import           Data.Scientific        (toBoundedInteger)
 import qualified Data.Vector            as Vector
 import qualified Data.ByteString.Lazy   as LBS
 import qualified Data.ByteString.Lazy.Char8 as C
+import           Data.Functor.Identity  (runIdentity, Identity(..))
 import           Yesod
 import           Yesod.Static
+
 
 -- A buffered channel consists of a list of all messages, and a TChan for new messages.
 data BufferedTChan a = BufferedTChan (TVar [a]) (TChan a)
 
 deviceId :: Value -> Int
 deviceId (Object v) = 
-  let (Number value) = fromJust $ HashMap.lookup "deviceId" v
+  let (Number value) = fromJust $ KeyMap.lookup "deviceId" v
       result = toBoundedInteger value :: Maybe Int
   in case result of
        Just x  -> x
        Nothing -> 0
 
 mergeEntry :: Value -> Value -> Value
-mergeEntry (Object v1) (Object v2) = Object $ HashMap.adjust (const $ Array log'') "log" v1
+mergeEntry (Object v1) (Object v2) = Object $ runIdentity $ KeyMap.alterF (\_ -> Identity (Just (Array log''))) "log" v1
   where
-    log1 = fromMaybe (error "log not found in v1") $ HashMap.lookup "log" v1
-    log2 = fromMaybe (error "log not found in v2") $ HashMap.lookup "log" v2
+    log1 = fromMaybe (error "log not found in v1") $ KeyMap.lookup "log" v1
+    log2 = fromMaybe (error "log not found in v2") $ KeyMap.lookup "log" v2
 
     log1list = case log1 of
                  (Array x) -> x
@@ -55,7 +57,7 @@ mergeEntry (Object v1) (Object v2) = Object $ HashMap.adjust (const $ Array log'
                   _         -> error "log2 is not an array"
 
     log2' = Vector.filter (\x -> case x of
-                                      Object obj -> case HashMap.lookup "type" obj of
+                                      Object obj -> case KeyMap.lookup "type" obj of
                                                      Just (String type') -> type' == "KNXIn" || type' == "KNXOut"
                                                      _                   -> False
                                       _          -> False) log2list
@@ -66,7 +68,7 @@ mergeEntry (Object v1) (Object v2) = Object $ HashMap.adjust (const $ Array log'
     log'' = Vector.fromList . nubBy (\x y -> ga x == ga y) . Vector.toList $ log'
       where
         ga x = case x of
-                  Object obj -> HashMap.lookup "ga" obj
+                  Object obj -> KeyMap.lookup "ga" obj
                   _          -> Nothing
 mergeEntry _ _ = error "Both arguments must be Objects"
 
