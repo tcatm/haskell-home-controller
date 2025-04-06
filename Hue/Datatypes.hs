@@ -3,6 +3,7 @@
 
 module Hue.Datatypes
     ( State (..)
+    , HueObject (..)
     , Metadata (..)
     , Room (..)
     , Scene (..)
@@ -13,18 +14,26 @@ module Hue.Datatypes
     , Zone (..)
     , Event (..)
     , EventType (..)
+    , EventData (..)
+    , GroupedLightUpdate (..)
     ) where
 
 import Data.Aeson
+import Data.Aeson.Types (Parser)
+import qualified Data.Map as Map
 import Data.UUID
+import Data.Text (Text)
 import qualified Data.ByteString.Lazy as L
 import GHC.Generics
 
+class HueObject a where
+  getId :: a -> UUID
+
 data State = State
-  { stateRooms :: [Room]
-  , stateScenes :: [Scene]
-  , stateGroupedLights :: [GroupedLight]
-  , stateZones :: [Zone]
+  { stateRooms :: Map.Map UUID Room
+  , stateScenes :: Map.Map UUID Scene
+  , stateGroupedLights :: Map.Map UUID GroupedLight
+  , stateZones :: Map.Map UUID Zone
   } deriving (Show)
 
 data Metadata = Metadata
@@ -67,6 +76,9 @@ data GroupedLight = GroupedLight
   , groupedLightDimming :: Maybe Dimming
   } deriving (Show, Generic)
 
+instance HueObject GroupedLight where
+  getId = groupedLightId
+
 instance FromJSON GroupedLight where
   parseJSON = withObject "GroupedLight" $ \v -> GroupedLight
     <$> v .: "id"
@@ -78,6 +90,9 @@ data Room = Room
   , roomMetadata :: Metadata
   , roomServices :: [Service]
   } deriving (Show, Generic)
+
+instance HueObject Room where
+  getId = roomId
 
 instance FromJSON Room where
   parseJSON = withObject "Room" $ \v -> Room
@@ -91,6 +106,9 @@ data Zone = Zone
   , zoneServices :: [Service]
   } deriving (Show, Generic)
 
+instance HueObject Zone where
+  getId = zoneId
+
 instance FromJSON Zone where
   parseJSON = withObject "Zone" $ \v -> Zone
     <$> v .: "id"
@@ -103,6 +121,9 @@ data Scene = Scene
   , sceneGroup :: Group
   } deriving (Show, Generic)
 
+instance HueObject Scene where
+  getId = sceneId
+
 instance FromJSON Scene where
   parseJSON = withObject "Scene" $ \v -> Scene
     <$> v .: "id"
@@ -114,6 +135,9 @@ data Group = Group
     , groupRtype :: String
     } deriving (Show, Generic, Eq)
 
+instance HueObject Group where
+    getId = groupRid
+
 instance FromJSON Group where
     parseJSON = withObject "Group" $ \v -> Group
         <$> v .: "rid"
@@ -123,6 +147,9 @@ data Service = Service
   { serviceRid :: UUID
   , serviceRtype :: String
   } deriving (Show, Generic)
+
+instance HueObject Service where
+  getId = serviceRid
 
 instance FromJSON Service where
   parseJSON = withObject "Service" $ \v -> Service
@@ -139,21 +166,56 @@ instance (FromJSON a) => FromJSON (HueResponse a) where
     <$> v .: "errors"
     <*> v .: "data"
 
-data EventType = EventUpdate | EventCreate | EventDelete
+data EventType = EventAdd | EventDelete | EventUpdate
   deriving (Show, Generic)
 
 instance FromJSON EventType where
   parseJSON = withText "EventType" $ \v -> case v of
-    "update" -> return EventUpdate
-    "create" -> return EventCreate
+    "add" -> return EventAdd
     "delete" -> return EventDelete
+    "update" -> return EventUpdate
     _ -> fail "Unknown event type"
+
+data GroupedLightUpdate = GroupedLightUpdate
+  { groupedLightUpdateId :: UUID
+  , groupedLightUpdateOn :: Maybe On
+  , groupedLightUpdateDimming :: Maybe Dimming
+  } deriving (Show, Generic)
+
+instance FromJSON GroupedLightUpdate where
+  parseJSON = withObject "GroupedLightUpdate" $ \v -> GroupedLightUpdate
+    <$> v .: "id"
+    <*> v .:? "on"
+    <*> v .:? "dimming"
+
+data LightUpdate = LightUpdate
+  { lightUpdateId :: UUID
+  , lightUpdateOn :: Maybe On
+  , lightUpdateDimming :: Maybe Dimming
+  } deriving (Show, Generic)
+
+instance FromJSON LightUpdate where
+  parseJSON = withObject "LightUpdate" $ \v -> LightUpdate
+    <$> v .: "id"
+    <*> v .:? "on"
+    <*> v .:? "dimming"
+
+data EventData = EventGroupedLight GroupedLightUpdate | EventLight LightUpdate
+  deriving (Show, Generic)
+
+instance FromJSON EventData where
+  parseJSON = withObject "EventData" $ \v -> do
+    type' <- v .: "type" :: Parser Text
+    case type' of
+      "grouped_light" -> EventGroupedLight <$> (parseJSON $ Object v)
+      "light" -> EventLight <$> (parseJSON $ Object v)
+      _ -> fail "Unknown event data type"
 
 data Event = Event
   { eventCreationtime :: String
   , eventId :: UUID
   , eventType :: EventType
-  , eventData :: [Value]
+  , eventData :: [EventData]
   } deriving (Show, Generic)
 
 instance FromJSON Event where

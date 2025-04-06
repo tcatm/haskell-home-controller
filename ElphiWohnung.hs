@@ -92,8 +92,8 @@ presenceDeviceF = do
         enablePresence = do
             groupWrite presenceOutGA (DPT1 True)            -- Rückmeldung Anwesenheit
             groupWrite (GroupAddress 1 3 1) (DPT5_1 0.7)    -- Bel. Decke Flur 1.1 auf 70%
-            groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeAuto)    -- Betriebsmodus Wohnung (HVAC) auf Auto
-            groupWrite (GroupAddress 3 0 5) (DPT5_1 0.4)    -- Volumenstrom auf 40%
+            groupWrite (GroupAddress 3 4 90) (DPT20_102 KNXHVACModeComfort)    -- Betriebsmodus Wohnung (HVAC) auf Comfort
+            groupWrite (GroupAddress 3 0 5) (DPT5_1 0.8)    -- Volumenstrom auf 80%
             
             timerId <- gets presenceTimer
             case timerId of
@@ -105,7 +105,7 @@ presenceDeviceF = do
         disablePresence = do
             groupWrite presenceOutGA (DPT1 False)                   -- Rückmeldung Anwesenheit
             groupWrite (GroupAddress 0 1 1) (DPT18_1 (False, 0))    -- Szene Aus für ganze Wohnung
-            groupWrite (GroupAddress 3 0 5) (DPT5_1 0)              -- Volumenstrom auf 0%
+            groupWrite (GroupAddress 3 0 5) (DPT5_1 0.8)            -- Volumenstrom auf 80%
             groupWrite (GroupAddress 1 1 27) (DPT1 False)           -- Steckdose Bett links Master Bedroom aus
             groupWrite (GroupAddress 1 1 28) (DPT1 False)           -- Steckdose Bett rechts Master Bedroom aus
             groupWrite (GroupAddress 1 1 29) (DPT1 False)           -- Handtuch Heizung Masterbad

@@ -10,13 +10,14 @@ module Hue.Hue
   where
 
 import Hue.Datatypes
+import Control.Applicative
 import Data.Ini
 import Data.Aeson
 import Data.Text
 import Data.Text.Encoding
 import Data.UUID
 import qualified Data.Map as Map
-import Data.Maybe (fromJust, maybeToList)
+import Data.Maybe (fromJust, maybeToList, fromMaybe, isJust, isNothing)
 import qualified Data.HashMap.Strict as HashMap
 import GHC.Generics
 import qualified Data.ByteString.Char8 as C
@@ -87,19 +88,22 @@ initializeState :: HueConfig -> LoggingT IO State
 initializeState config = do
   logInfoNS logSourceHue "Retrieving initial Hue state"
 
-  rooms <- getResponse config "/clip/v2/resource/room"
+  rooms <- responseToMap <$> getResponse config "/clip/v2/resource/room"
   logDebugNS logSourceHue . pack $ "Found rooms: " <> show rooms
 
-  scenes <- getResponse config "/clip/v2/resource/scene"
+  scenes <- responseToMap <$> getResponse config "/clip/v2/resource/scene"
   logDebugNS logSourceHue . pack $ "Found scenes: " <> show scenes
 
-  groupedLights <- getResponse config "/clip/v2/resource/grouped_light"
+  groupedLights <- responseToMap <$> getResponse config "/clip/v2/resource/grouped_light"
   logDebugNS logSourceHue . pack $ "Found grouped lights: " <> show groupedLights
 
-  zones <- getResponse config "/clip/v2/resource/zone"
+  zones <- responseToMap <$> getResponse config "/clip/v2/resource/zone"
   logDebugNS logSourceHue . pack $ "Found zones: " <> show zones
 
   return $ State rooms scenes groupedLights zones
+
+responseToMap :: HueObject a => [a] -> Map.Map UUID a
+responseToMap = Map.fromList . Prelude.map (\x -> (getId x, x))
 
 runHue :: HueContext -> LoggingT IO ()
 runHue ctx = runReaderT hueLoop ctx
@@ -159,8 +163,8 @@ getResponse config endpoint = do
       return []
     Right resp -> return $ hueResponseData resp
 
-filterRoomsByName :: String -> [Room] -> [Room]
-filterRoomsByName name rooms = Prelude.filter (\r -> metadataName (roomMetadata r) == name) rooms
+filterRoomsByName :: String -> Map.Map UUID Room -> [Room]
+filterRoomsByName name = Map.elems . Map.filter (\r -> metadataName (roomMetadata r) == name)
 
 setScene :: HueContext -> String -> String -> LoggingT IO ()
 setScene ctx roomName sceneName = do
@@ -169,8 +173,8 @@ setScene ctx roomName sceneName = do
   let scenes = stateScenes state
 
   forM_ rooms $ \room -> do
-    let scenes' = Prelude.filter (\s -> sceneGroup s == (Group (roomId room) "room")) scenes
-    let scenes'' = Prelude.filter (\s -> metadataName (sceneMetadata s) == sceneName) scenes'
+    let scenes' = Map.filter (\s -> sceneGroup s == (Group (roomId room) "room")) scenes
+    let scenes'' = Map.filter (\s -> metadataName (sceneMetadata s) == sceneName) scenes'
 
     forM_ scenes'' $ \scene -> do
       let url = "/clip/v2/resource/scene/" <> (toString $ sceneId scene)
@@ -263,13 +267,40 @@ listenForEvents ctx lastEventId = do
               logWarnNS logSourceHue $ pack $ "Error decoding event: " <> err <> " " <> show d
               return ()
             Right e -> do
-              logDebugNS logSourceHue $ pack $ "Received message (id = " <> (show eventId) <> "): " <> show e
               mapM_ (handleEvent ctx) e
 
 handleEvent :: HueContext -> Event -> LoggingT IO ()
 handleEvent ctx event = do
   let data' = eventData event
-  liftIO $ mapM_ (putStrLn . ppShow) data'
+  liftIO $ putStrLn $ "Event type: " <> (show $ eventType event)
+  
+  case (eventType event) of
+    EventUpdate -> mapM_ (eventUpdate ctx) data'
+    _ -> return ()
+
+eventUpdate :: HueContext -> EventData -> LoggingT IO ()
+eventUpdate ctx (EventGroupedLight event) = do
+  let id = groupedLightUpdateId event
+
+  state <- lift $ readTVarIO $ hueState ctx
+
+  let groupedLight = Map.lookup id $ stateGroupedLights state
+
+  unless (isNothing groupedLight) $ do
+    let groupedLight' = fromJust groupedLight
+    let groupedLight'' = groupedLight' { groupedLightOn = fromMaybe (groupedLightOn groupedLight') $ groupedLightUpdateOn event
+                                       , groupedLightDimming = groupedLightUpdateDimming event <|> groupedLightDimming groupedLight'
+                                       }
+
+    -- create device input from event
+
+    let state' = state { stateGroupedLights = Map.insert id groupedLight'' $ stateGroupedLights state }
+    lift $ atomically $ writeTVar (hueState ctx) state'
+
+    liftIO $ putStrLn $ "Updated grouped light: " <> (show groupedLight'')
+
+eventUpdate ctx event = do
+  logWarnNS logSourceHue $ "Unhandled event: " <> (pack $ show event)
 
 eventStreamPath :: String
 eventStreamPath = "/eventstream/clip/v2"
