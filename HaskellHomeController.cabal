@@ -11,6 +11,7 @@ executable homecontrol
     Device
     DeviceRunner
     ElphiWohnung
+    FM2
     KNX
     KNXAddress
     KNXDatatypes
