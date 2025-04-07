@@ -18,6 +18,9 @@ WORKDIR /app
 # Copy the binary from the builder stage.
 COPY --from=builder /app/bin/homecontrol /usr/local/bin/homecontrol
 
+# Copy webinterface
+COPY web/ /app/web/
+
 # Set the entrypoint.
 ENTRYPOINT ["/usr/local/bin/homecontrol"]
 
