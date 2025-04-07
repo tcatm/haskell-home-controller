@@ -7,27 +7,36 @@ import KNXMessages
 import DPTs
 
 import System.IO
+import System.IO.Error(isEOFError)
 import Control.Monad
 import Control.Monad.Logger
 import Control.Monad.IO.Class
 import Control.Concurrent.STM
+import Control.Concurrent (threadDelay)
+import Control.Exception (IOException, try)
+import Control.Monad (forever)
 import Data.Maybe (listToMaybe)
 import Text.Read (readMaybe)
 
 stdinLoop :: TQueue GroupMessage -> LoggingT IO ()
 stdinLoop knx = forever $ do
-  line <- liftIO $ hGetLine stdin
-  liftIO $ putStrLn $ "Received from stdin: " <> line
-  -- Parse "1/2/3 0 0 0 ..." to KNXAdress + List of integers
-  let parts = words line
-  case parseInput parts of
-    Just (groupAddress, dpt) -> do
-      -- Do something with the parsed values
-      liftIO $ putStrLn $ "Parsed: " <> show groupAddress <> " " <> show dpt
-      -- Send a GroupValueWrite to the KNX bus
-      liftIO $ atomically $ writeTQueue knx $ GroupValueWrite groupAddress dpt
-      return ()
-    Nothing -> liftIO $ putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
+  result <- liftIO $ try $ hGetLine stdin
+  case result of
+    Left e 
+      | isEOFError e -> do
+          -- End of file: ignore further input
+          liftIO $ forever $ threadDelay maxBound
+      | otherwise -> liftIO $ ioError e
+    Right line -> do
+      liftIO $ putStrLn $ "Received from stdin: " <> line
+      -- Parse "1/2/3 0 0 0 ..." to KNXAdress + List of integers
+      let parts = words line
+      case parseInput parts of
+        Just (groupAddress, dpt) -> do
+          liftIO $ putStrLn $ "Parsed: " <> show groupAddress <> " " <> show dpt
+          -- Send a GroupValueWrite to the KNX bus
+          liftIO $ atomically $ writeTQueue knx $ GroupValueWrite groupAddress dpt
+        Nothing -> liftIO $ putStrLn "Failed to parse input. Format should be: main/middle/sub byte1 byte2 byte3 ..."
 
 -- Parse a String like: 0/1/2 DPT1 True
 parseInput :: [String] -> Maybe (GroupAddress, DPT)

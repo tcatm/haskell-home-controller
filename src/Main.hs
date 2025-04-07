@@ -6,10 +6,8 @@ import DeviceRunner
 import Console
 import Webinterface
 import Config
-import Webinterface
 import qualified Hue.Hue as Hue
 
-import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad.IO.Class
 import Control.Monad.Logger
@@ -18,6 +16,7 @@ import Data.Maybe
 import System.Environment (getArgs)
 import Options.Applicative
 import qualified Data.Map.Strict as Map
+import Control.Concurrent.Async (async, waitAnyCancel)
 
 import qualified ElphiWohnung as Elphi
 import qualified FM2 as FM2
@@ -36,11 +35,11 @@ getConfigByName :: ConfigName -> Maybe Config
 getConfigByName name = Map.lookup name availableConfigs
 
 data Options = Options
-  { knxHostname :: String
-  , knxPort     :: String
+  { knxHostname   :: String
+  , knxPort       :: String
   , hueConfigFile :: FilePath
-  , webPort :: Int
-  , configName  :: ConfigName
+  , webPort       :: Int
+  , configName    :: ConfigName
   } deriving (Show)
 
 options :: Parser Options
@@ -73,22 +72,6 @@ options = Options
 knxCallback :: TChan DeviceInput -> KNXCallback
 knxCallback chan = KNXCallback $ atomically <$> writeTChan chan . KNXIncomingMessage
 
--- Define a helper function to create a thread and return an MVar
-forkIOWithSync :: LoggingT IO () -> LoggingT IO (MVar ())
-forkIOWithSync action = do
-    logger <- askLoggerIO
-    syncVar <- liftIO newEmptyMVar
-    liftIO $ forkIO $ do
-        runLoggingT action logger
-        putMVar syncVar ()
-    return syncVar
-
--- Define the main function to create and synchronize threads for a list of actions
-waitAllThreads :: [LoggingT IO ()] -> LoggingT IO ()
-waitAllThreads actions = do
-  syncVars <- mapM forkIOWithSync actions
-  liftIO $ mapM_ takeMVar syncVars
-
 logFilter :: LogSource -> LogLevel -> Bool
 logFilter source level
     | source == logSourceKNX && level == LevelDebug = False
@@ -103,23 +86,30 @@ main = execParser opts >>= run
      <> header "knx-hs - A Haskell-based KNX control system" )
 
 run :: Options -> IO ()
-run opts = runStdoutLoggingT $ filterLogger logFilter $ do
+run opts = runStdoutLoggingT (filterLogger logFilter $ runApp opts)
+
+runApp :: Options -> LoggingT IO ()
+runApp opts = do
+  logger <- askLoggerIO
   hueContext <- Hue.initHue (hueConfigFile opts)
-  deviceInput <- liftIO $ newTChanIO
-  webQueue <- liftIO $ newTQueueIO
+  deviceInput <- liftIO newTChanIO
+  webQueue <- liftIO newTQueueIO
   knxContext <- createKNXContext (knxHostname opts) (knxPort opts) (knxCallback deviceInput)
 
   mConfig <- liftIO $ case getConfigByName (configName opts) of
     Just cfg -> return (Just cfg)
-    Nothing -> putStrLn ("Error: Invalid configuration name '" ++ configName opts ++ "'. Available configurations are: " ++ show (Map.keys availableConfigs)) >> return Nothing
+    Nothing -> do
+      putStrLn ("Error: Invalid configuration name '" ++ configName opts ++ "'. Available configurations are: " ++ show (Map.keys availableConfigs))
+      return Nothing
 
   case mConfig of
-    Just config -> do
-      let actions = [ runKnx knxContext
-                    , stdinLoop (sendQueue knxContext)
-                    , runDevices (devices config) deviceInput (sendQueue knxContext) webQueue (Hue.sendQueue hueContext)
-                    , runWebinterface webQueue (webPort opts)
-                    , Hue.runHue hueContext
-                    ]
-      waitAllThreads actions
-    Nothing -> return () -- Exit gracefully if the config is invalid
+    Just config -> liftIO $ do
+      a1 <- async $ runLoggingT (runKnx knxContext) logger
+      a2 <- async $ runLoggingT (stdinLoop (sendQueue knxContext)) logger
+      a3 <- async $ runLoggingT (runDevices (devices config) deviceInput (sendQueue knxContext) webQueue (Hue.sendQueue hueContext)) logger
+      a4 <- async $ runLoggingT (runWebinterface webQueue (webPort opts)) logger
+      a5 <- async $ runLoggingT (Hue.runHue hueContext) logger
+      _ <- waitAnyCancel [a1, a2, a3, a4, a5]
+      return ()
+    Nothing -> return ()
+
