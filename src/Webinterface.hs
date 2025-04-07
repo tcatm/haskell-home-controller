@@ -189,12 +189,12 @@ getStreamR = do
               loop
         loop
 
-webinterface :: TQueue Value -> IO ()
-webinterface inputQueue = do
+webinterface :: TQueue Value -> Int -> IO ()
+webinterface inputQueue port = do
     chan <- newBufferedTChanIO
     forkIO $ evalStateT (producer inputQueue chan) 0
     getStatic@(Static settings) <- static "web/"
-    warp 3000 App {..}
+    warp port App {..}
 
-runWebinterface :: TQueue Value -> LoggingT IO ()
-runWebinterface = liftIO . webinterface
+runWebinterface :: TQueue Value -> Int -> LoggingT IO ()
+runWebinterface inputQueue port = liftIO (webinterface inputQueue port)

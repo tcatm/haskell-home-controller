@@ -44,6 +44,7 @@ executable homecontrol
     monad-logger,
     mtl,
     network,
+    optparse-applicative,
     pretty-show,
     pretty-terminal,
     scientific,
